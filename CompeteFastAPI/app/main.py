@@ -1,4 +1,15 @@
 """CompeteFastAPI Application Entrypoint."""
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+BASE_DIR = Path(__file__).resolve().parent.parent
+env_file = BASE_DIR / ".env"
+if env_file.exists():
+    load_dotenv(dotenv_path=env_file)
+else:
+    load_dotenv()
+
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 import logging

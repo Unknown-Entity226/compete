@@ -1,4 +1,4 @@
-"""Application Configuration Settings."""
+from pathlib import Path
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     DEFAULT_RATE_LIMIT: str = "60/minute"
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent.parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"
