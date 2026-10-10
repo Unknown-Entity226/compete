@@ -1,0 +1,57 @@
+{
+  "competitionData": {
+    "lastUpdated": "2026-08-15T01:14:26Z",
+    "users": [
+      {
+        "leetcodeId": "algo_master_99",
+        "contestRating": 1845,
+        "problemStats": {
+          "total": 450,
+          "easy": 150,
+          "medium": 250,
+          "hard": 50
+        },
+        "strongestArea": "Dynamic Programming",
+        "topicStats": [
+          {
+            "topic": "Dynamic Programming",
+            "count": 85
+          },
+          {
+            "topic": "Graphs",
+            "count": 62
+          },
+          {
+            "topic": "Two Pointers",
+            "count": 45
+          }
+        ]
+      },
+      {
+        "leetcodeId": "binary_ninja",
+        "contestRating": 1720,
+        "problemStats": {
+          "total": 415,
+          "easy": 190,
+          "medium": 200,
+          "hard": 25
+        },
+        "strongestArea": "Trees",
+        "topicStats": [
+          {
+            "topic": "Trees",
+            "count": 92
+          },
+          {
+            "topic": "Hash Table",
+            "count": 75
+          },
+          {
+            "topic": "Binary Search",
+            "count": 38
+          }
+        ]
+      }
+    ]
+  }
+}
