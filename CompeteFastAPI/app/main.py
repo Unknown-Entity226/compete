@@ -34,12 +34,19 @@ logging.basicConfig(
 logger = logging.getLogger("compete")
 
 
+from app.api.deps import get_cache_service
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup and shutdown events."""
     logger.info("Starting up CompeteFastAPI backend version %s", settings.APP_VERSION)
+    cache = get_cache_service()
+    cache_info = await cache.health_check()
+    logger.info("Cache service ready (%s on %s)", cache_info["status"], cache_info["backend"])
     yield
     logger.info("Shutting down CompeteFastAPI backend")
+    await cache.close()
 
 
 app = FastAPI(
@@ -96,10 +103,13 @@ async def compete_exception_handler(request: Request, exc: CompeteException):
 @app.get("/api/health", tags=["Health"])
 async def health_check():
     """Health check endpoint for container probes and load balancers."""
+    cache = get_cache_service()
+    cache_info = await cache.health_check()
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
         "version": settings.APP_VERSION,
+        "cache": cache_info,
     }
 
 
