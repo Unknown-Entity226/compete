@@ -37,7 +37,7 @@ logger = logging.getLogger("compete")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup and shutdown events."""
-    logger.info("Starting up CompeteFastAPI backend v%s", settings.VERSION)
+    logger.info("Starting up CompeteFastAPI backend version %s", settings.APP_VERSION)
     yield
     logger.info("Shutting down CompeteFastAPI backend")
 
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="Compete API",
     description="Head-to-head LeetCode competition backend and normalized GraphQL proxy.",
-    version=settings.VERSION,
+    version=settings.APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -99,12 +99,12 @@ async def health_check():
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
-        "version": settings.VERSION,
+        "version": settings.APP_VERSION,
     }
 
 
-# Include /api router
-app.include_router(api_router, prefix=settings.API_V1_STR)
+# Include api router
+app.include_router(api_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["Root"])
@@ -112,13 +112,13 @@ async def root():
     """Root metadata endpoint."""
     return {
         "service": "CompeteFastAPI",
-        "version": settings.VERSION,
+        "version": settings.APP_VERSION,
         "docs": "/docs",
         "endpoints": {
-            "user_profile": f"{settings.API_V1_STR}/users/{{username}}",
-            "user_problems": f"{settings.API_V1_STR}/users/{{username}}/problems",
-            "user_activity": f"{settings.API_V1_STR}/users/{{username}}/activity",
-            "compare_users": f"{settings.API_V1_STR}/compare/{{user1}}/{{user2}}",
+            "user_profile": f"{settings.API_PREFIX}/users/{{username}}",
+            "user_problems": f"{settings.API_PREFIX}/users/{{username}}/problems",
+            "user_activity": f"{settings.API_PREFIX}/users/{{username}}/activity",
+            "compare_users": f"{settings.API_PREFIX}/compare/{{first_user}}/{{second_user}}",
         },
     }
 

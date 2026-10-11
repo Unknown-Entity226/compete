@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     """CompeteFastAPI Configuration Settings."""
     
     PROJECT_NAME: str = "CompeteFastAPI"
-    VERSION: str = "0.1.0"
-    API_V1_STR: str = "/api"
+    APP_VERSION: str = "0.1.0"
+    API_PREFIX: str = "/api"
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [

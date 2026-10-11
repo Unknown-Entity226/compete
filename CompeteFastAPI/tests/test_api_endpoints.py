@@ -67,7 +67,7 @@ async def test_get_user_problems_endpoint(async_client):
 
 @pytest.mark.asyncio
 async def test_compare_users_endpoint(async_client):
-    """Test GET /api/compare/{user1}/{user2} calculates metrics and frontend format."""
+    """Test GET /api/compare/{first_user}/{second_user} calculates metrics and frontend format."""
     response = await async_client.get("/api/compare/algo_master_99/binary_ninja")
     assert response.status_code == 200
     data = response.json()
