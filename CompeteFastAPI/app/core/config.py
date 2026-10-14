@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,18 +26,29 @@ class Settings(BaseSettings):
     LEETCODE_MAX_RETRIES: int = 3
     LEETCODE_BACKOFF_FACTOR: float = 1.5
     
-    # Redis Configuration (Phase 2 readiness)
+    # Redis Cache Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_USER_STATS_TTL_SECONDS: int = 600       # 10 minutes
     CACHE_USER_PROBLEMS_TTL_SECONDS: int = 1800   # 30 minutes
     CACHE_USER_ACTIVITY_TTL_SECONDS: int = 300    # 5 minutes
-    
-    # PostgreSQL Configuration (Phase 3 readiness)
+
+    # PostgreSQL Database Configuration
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/compete_db"
-    
+
+    # Persistence: snapshot minimum interval to avoid flooding the statistics table
+    SNAPSHOT_MIN_INTERVAL_SECONDS: int = 300      # 5 minutes between snapshots per user
+
     # Rate Limiting (SlowAPI)
     DEFAULT_RATE_LIMIT: str = "60/minute"
     
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def assemble_async_db_url(cls, v: str) -> str:
+        """Ensure standard postgresql:// connection strings use the asyncpg driver."""
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parent.parent.parent / ".env"),
         env_file_encoding="utf-8",

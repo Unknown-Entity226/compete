@@ -3,6 +3,7 @@ from app.schemas.user import ProblemStats, TopicStat, UserProfileResponse
 from app.schemas.problem import ProblemStatusItem, UserProblemsResponse
 from app.schemas.activity import SubmissionItem, UserActivityResponse
 from app.schemas.compare import CompetitorStats, CompetitionMetrics, CompareResponse
+from app.schemas.history import SnapshotEntry, UserHistoryResponse
 
 __all__ = [
     "ProblemStats",
@@ -15,5 +16,7 @@ __all__ = [
     "CompetitorStats",
     "CompetitionMetrics",
     "CompareResponse",
+    "SnapshotEntry",
+    "UserHistoryResponse",
 ]
 

@@ -17,11 +17,11 @@ class Problem(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
-    frontend_question_id: Mapped[int] = mapped_column(
+    frontend_question_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         unique=True,
         index=True,
-        nullable=False,
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(
         String(255),
