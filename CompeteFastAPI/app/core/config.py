@@ -17,7 +17,6 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "*",
     ]
     
     # LeetCode Upstream Configuration
@@ -34,6 +33,10 @@ class Settings(BaseSettings):
 
     # PostgreSQL Database Configuration
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/compete_db"
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: float = 30.0
+    INIT_DB_ON_STARTUP: bool = True
 
     # Persistence: snapshot minimum interval to avoid flooding the statistics table
     SNAPSHOT_MIN_INTERVAL_SECONDS: int = 300      # 5 minutes between snapshots per user
@@ -41,10 +44,12 @@ class Settings(BaseSettings):
     # Rate Limiting (SlowAPI)
     DEFAULT_RATE_LIMIT: str = "60/minute"
     RATE_LIMIT_COMPARE: str = "30/minute"
+    TRUSTED_PROXIES: List[str] = []
 
     # Background Scheduler (APScheduler)
     SNAPSHOT_SYNC_INTERVAL_HOURS: int = 1
     ENABLE_BACKGROUND_SCHEDULER: bool = True
+    BACKGROUND_SYNC_CONCURRENCY: int = 5
     
     @field_validator("DATABASE_URL", mode="after")
     @classmethod

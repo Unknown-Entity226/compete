@@ -25,7 +25,7 @@ async def _safe_get_activity(
 ) -> Optional[UserActivityResponse]:
     """Fetch user activity safely without blocking comparison on upstream failure."""
     try:
-        return await client.get_user_activity(username=username, limit=20)
+        return await client.get_user_activity(username=username, limit=50)
     except Exception as exc:
         logger.debug("Could not fetch recent activity for '%s': %s", username, exc)
         return None

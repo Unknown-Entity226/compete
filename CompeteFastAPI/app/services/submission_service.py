@@ -4,12 +4,14 @@ Handles bulk-upsert of recent submission records, avoiding duplicates
 via the unique submission_id constraint.
 """
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models.problem import Problem
 from app.models.submission import Submission
@@ -17,6 +19,15 @@ from app.models.user import User
 from app.schemas.activity import SubmissionItem
 
 logger = logging.getLogger(__name__)
+
+
+def _get_insert_fn(session: AsyncSession):
+    """Return the dialect-appropriate atomic insert function."""
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+    if dialect_name == "sqlite":
+        return sqlite_insert
+    return pg_insert
 
 
 async def upsert_submissions(
@@ -27,6 +38,7 @@ async def upsert_submissions(
     """Persist new submissions for a user, skipping already-stored ones.
 
     Links submission to known problems in the catalog when available.
+    Uses atomic ON CONFLICT DO NOTHING to eliminate race conditions.
     Returns the count of newly inserted submissions.
     """
     if not submissions:
@@ -48,31 +60,42 @@ async def upsert_submissions(
         )
         problems_by_slug = {row[0]: row[1] for row in problems_res.fetchall()}
 
-    new_submissions: List[Submission] = []
+    values = []
     for item in submissions:
         if not item.id or item.id in seen_ids:
             continue
         seen_ids.add(item.id)  # Mark as seen to prevent within-batch duplicates
-        new_submissions.append(
-            Submission(
-                user_id=user.id,
-                problem_id=problems_by_slug.get(item.titleSlug),
-                submission_id=item.id,
-                problem_title=item.title,
-                problem_slug=item.titleSlug,
-                status_display=item.status,
-                lang=item.lang,
-                submitted_at=datetime.fromtimestamp(item.timestamp, tz=timezone.utc),
-            )
+        values.append(
+            {
+                "id": uuid.uuid4(),
+                "user_id": user.id,
+                "problem_id": problems_by_slug.get(item.titleSlug),
+                "submission_id": item.id,
+                "problem_title": item.title,
+                "problem_slug": item.titleSlug,
+                "status_display": item.status,
+                "lang": item.lang,
+                "submitted_at": datetime.fromtimestamp(item.timestamp, tz=timezone.utc),
+            }
         )
 
-    if new_submissions:
-        session.add_all(new_submissions)
+    if values:
+        insert_fn = _get_insert_fn(session)
+        stmt = (
+            insert_fn(Submission)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["submission_id"])
+            .returning(Submission.id)
+        )
+        res = await session.execute(stmt)
+        inserted_ids = res.scalars().all()
+        inserted_count = len(inserted_ids)
         logger.debug(
             "Inserted %d new submissions for user '%s'",
-            len(new_submissions),
+            inserted_count,
             user.username,
         )
+        return inserted_count
 
-    return len(new_submissions)
+    return 0
 

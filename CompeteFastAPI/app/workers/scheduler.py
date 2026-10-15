@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.db.session import async_session_factory
 from app.models.user import User
 from app.services.stats_service import record_snapshot
-from app.api.deps import get_leetcode_client
+from app.api.deps import get_leetcode_client, get_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -23,60 +23,82 @@ _scheduler: Optional[AsyncIOScheduler] = None
 
 
 async def sync_tracked_users_snapshots() -> int:
-    """Scheduled task: iterate through all users in DB and refresh stats snapshot.
+    """Scheduled task: refresh stats snapshots for registered users.
 
-    Fetches only usernames (lightweight query), then processes each user in its
-    own isolated async session and transaction. A brief delay between upstream
-    LeetCode calls avoids triggering rate limits.
+    Uses a Redis distributed lock to ensure only one worker runs the job in
+    multi-process/scaled deployments. Processes users concurrently using an
+    asyncio.Semaphore pool to prevent timeout bottlenecks.
 
     Returns the count of successfully refreshed users.
     """
     logger.info("Starting scheduled background user snapshot synchronization...")
-    synced_count = 0
     client = get_leetcode_client()
+    cache = get_cache_service()
+    redis_client = await cache._get_redis()
+    lock_key = "compete:scheduler:lock"
+    lock_acquired = False
 
-    # Fetch only usernames — lightweight, avoids loading full ORM objects en masse
-    try:
-        async with async_session_factory() as session:
-            result = await session.execute(select(User.username))
-            usernames = [row[0] for row in result.fetchall()]
-    except Exception as exc:
-        logger.error("Failed to fetch tracked usernames for sync: %s", exc)
-        return 0
-
-    if not usernames:
-        logger.info("No tracked users in database to sync.")
-        return 0
-
-    for username in usernames:
+    if redis_client:
         try:
-            profile = await client.get_user_profile(username)
-            # Each user gets its own session and transaction — failures are isolated
-            async with async_session_factory() as session:
-                result = await session.execute(select(User).where(User.username == username))
-                user = result.scalar_one_or_none()
-                if user is None:
-                    logger.debug("User '%s' disappeared between query and sync; skipping.", username)
-                    continue
-                await record_snapshot(session, user, profile)
-                await session.commit()
-            synced_count += 1
-            logger.debug("Synced snapshot for '%s'.", username)
+            # Try to acquire lock with 1 hour expiration
+            lock_acquired = await redis_client.set(lock_key, "locked", ex=3600, nx=True)
+            if not lock_acquired:
+                logger.info("Another worker is executing scheduled user sync; skipping.")
+                return 0
         except Exception as exc:
-            logger.warning(
-                "Scheduled sync failed for user '%s': %s",
-                username,
-                exc,
-            )
-        # Brief delay to avoid triggering LeetCode upstream rate limits
-        await asyncio.sleep(0.5)
+            logger.debug("Could not verify Redis scheduler lock: %s", exc)
 
-    logger.info(
-        "Completed background synchronization: refreshed %d/%d users.",
-        synced_count,
-        len(usernames),
-    )
-    return synced_count
+    try:
+        # Fetch only usernames — lightweight, avoids loading full ORM objects en masse
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(select(User.username))
+                usernames = [row[0] for row in result.fetchall()]
+        except Exception as exc:
+            logger.error("Failed to fetch tracked usernames for sync: %s", exc)
+            return 0
+
+        if not usernames:
+            logger.info("No tracked users in database to sync.")
+            return 0
+
+        semaphore = asyncio.Semaphore(settings.BACKGROUND_SYNC_CONCURRENCY)
+
+        async def _sync_single_user(username: str) -> bool:
+            async with semaphore:
+                try:
+                    profile = await client.get_user_profile(username)
+                    async with async_session_factory() as session:
+                        result = await session.execute(select(User).where(User.username == username))
+                        user = result.scalar_one_or_none()
+                        if user is None:
+                            logger.debug("User '%s' disappeared between query and sync; skipping.", username)
+                            return False
+                        await record_snapshot(session, user, profile)
+                        await session.commit()
+                    logger.debug("Synced snapshot for '%s'.", username)
+                    return True
+                except Exception as exc:
+                    logger.warning("Scheduled sync failed for user '%s': %s", username, exc)
+                    return False
+                finally:
+                    await asyncio.sleep(0.2)
+
+        results = await asyncio.gather(*[_sync_single_user(u) for u in usernames])
+        synced_count = sum(1 for r in results if r)
+
+        logger.info(
+            "Completed background synchronization: refreshed %d/%d users.",
+            synced_count,
+            len(usernames),
+        )
+        return synced_count
+    finally:
+        if redis_client and lock_acquired:
+            try:
+                await redis_client.delete(lock_key)
+            except Exception as exc:
+                logger.debug("Could not release scheduler lock: %s", exc)
 
 
 def start_scheduler() -> AsyncIOScheduler:

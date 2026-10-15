@@ -4,12 +4,15 @@ Handles cataloging problems into the problems table and tracking
 user-to-problem solve states in the user_problems table.
 """
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models.problem import Problem
 from app.models.user import User
@@ -19,6 +22,15 @@ from app.schemas.problem import ProblemStatusItem
 logger = logging.getLogger(__name__)
 
 
+def _get_insert_fn(session: AsyncSession):
+    """Return the dialect-appropriate atomic insert function."""
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+    if dialect_name == "sqlite":
+        return sqlite_insert
+    return pg_insert
+
+
 async def record_user_problems(
     session: AsyncSession,
     user: User,
@@ -26,21 +38,52 @@ async def record_user_problems(
 ) -> int:
     """Upsert problems and user-problem associations.
 
-    1. Ensures each problem exists in the `problems` catalog table.
-    2. Upserts `user_problems` tracking the solve status and timestamps.
+    1. Ensures each problem exists in the `problems` catalog table via atomic ON CONFLICT DO NOTHING.
+    2. Upserts `user_problems` tracking the solve status and timestamps atomically.
     Returns the count of user problems processed.
     """
     if not problems:
         return 0
 
     recorded_count = 0
-    slugs = [p.titleSlug for p in problems if p.titleSlug]
+    slugs = list({p.titleSlug for p in problems if p.titleSlug})
 
     # Pre-fetch existing problems by slug
     existing_problems_res = await session.execute(
         select(Problem).where(Problem.title_slug.in_(slugs))
     )
     existing_problems = {p.title_slug: p for p in existing_problems_res.scalars().all()}
+
+    # Insert any missing problems atomically
+    missing_problems_by_slug = {}
+    for item in problems:
+        if (
+            item.titleSlug
+            and item.titleSlug not in existing_problems
+            and item.titleSlug not in missing_problems_by_slug
+        ):
+            missing_problems_by_slug[item.titleSlug] = {
+                "id": uuid.uuid4(),
+                "frontend_question_id": None,
+                "title": item.title,
+                "title_slug": item.titleSlug,
+                "difficulty": item.difficulty or "Unknown",
+            }
+
+    if missing_problems_by_slug:
+        insert_fn = _get_insert_fn(session)
+        stmt = (
+            insert_fn(Problem)
+            .values(list(missing_problems_by_slug.values()))
+            .on_conflict_do_nothing(index_elements=["title_slug"])
+        )
+        await session.execute(stmt)
+
+        # Refresh existing_problems map to retrieve full Problem entities
+        existing_problems_res = await session.execute(
+            select(Problem).where(Problem.title_slug.in_(slugs))
+        )
+        existing_problems = {p.title_slug: p for p in existing_problems_res.scalars().all()}
 
     # Pre-fetch existing user_problems for this user
     existing_up_res = await session.execute(
@@ -54,21 +97,9 @@ async def record_user_problems(
             continue
 
         problem = existing_problems.get(item.titleSlug)
-
         if problem is None:
-            problem = Problem(
-                frontend_question_id=None,  # LeetCode item.id is a submission ID, not question ID
-                title=item.title,
-                title_slug=item.titleSlug,
-                difficulty=item.difficulty or "Unknown",
-            )
-            session.add(problem)
-            await session.flush()
-            existing_problems[item.titleSlug] = problem
-        # Note: frontend_question_id is intentionally left None
-        # as item.id from recentAcSubmissionList is a submission ID, not the question number
+            continue
 
-        # Now link user_problem
         solved_datetime = None
         if item.timestamp:
             solved_datetime = datetime.fromtimestamp(item.timestamp, tz=timezone.utc)
@@ -77,15 +108,30 @@ async def record_user_problems(
 
         user_problem = existing_user_problems.get(problem.id)
         if user_problem is None:
-            user_problem = UserProblem(
-                user_id=user.id,
-                problem_id=problem.id,
-                status=item.status or "SOLVED",
-                solved_at=solved_datetime,
-                last_attempted_at=solved_datetime or datetime.now(timezone.utc),
+            insert_fn = _get_insert_fn(session)
+            stmt_up = (
+                insert_fn(UserProblem)
+                .values(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    problem_id=problem.id,
+                    status=item.status or "SOLVED",
+                    solved_at=solved_datetime,
+                    last_attempted_at=solved_datetime or datetime.now(timezone.utc),
+                )
+                .on_conflict_do_nothing(index_elements=["user_id", "problem_id"])
             )
-            session.add(user_problem)
-            existing_user_problems[problem.id] = user_problem
+            await session.execute(stmt_up)
+
+            up_res = await session.execute(
+                select(UserProblem).where(
+                    UserProblem.user_id == user.id,
+                    UserProblem.problem_id == problem.id,
+                )
+            )
+            user_problem = up_res.scalar_one_or_none()
+            if user_problem:
+                existing_user_problems[problem.id] = user_problem
             recorded_count += 1
         else:
             # Update existing state if changed

@@ -47,26 +47,40 @@ class CompetitionService:
 
     @staticmethod
     def calculate_streak(
-        submissions: List[SubmissionItem],
+        submissions: List[Any],
         reference_time: Optional[datetime] = None,
+        additional_timestamps: Optional[List[int]] = None,
+        timezone_offset_minutes: int = 0,
     ) -> int:
         """Calculate consecutive daily solving streak from submission timestamps.
 
-        Considers submissions grouped by UTC calendar date. If the user was active
-        today or yesterday, counts consecutive preceding days.
+        Considers submissions grouped by calendar date (adjusted by optional timezone offset).
+        If the user was active today or yesterday, counts consecutive preceding days.
         """
-        if not submissions:
+        if not submissions and not additional_timestamps:
             return 0
 
-        now = reference_time or datetime.now(timezone.utc)
+        tz = timezone(timedelta(minutes=timezone_offset_minutes)) if timezone_offset_minutes else timezone.utc
+        now = (reference_time or datetime.now(timezone.utc)).astimezone(tz)
         today = now.date()
         yesterday = today - timedelta(days=1)
 
         # Collect distinct submission dates
         active_dates = set()
-        for s in submissions:
-            if s.timestamp and (s.status or "").lower() in ("accepted", "solved"):
-                sub_date = datetime.fromtimestamp(s.timestamp, tz=timezone.utc).date()
+        for s in (submissions or []):
+            status = getattr(s, "status", None) or getattr(s, "status_display", "")
+            if (status or "").lower() in ("accepted", "solved"):
+                ts = getattr(s, "timestamp", None)
+                if ts:
+                    sub_date = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(tz).date()
+                    active_dates.add(sub_date)
+                elif hasattr(s, "submitted_at") and s.submitted_at:
+                    sub_date = s.submitted_at.astimezone(tz).date()
+                    active_dates.add(sub_date)
+
+        for ts in (additional_timestamps or []):
+            if ts:
+                sub_date = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(tz).date()
                 active_dates.add(sub_date)
 
         if not active_dates:
@@ -122,10 +136,9 @@ class CompetitionService:
         # 1. Rating component
         if profile.contestRating and profile.contestRating > 0:
             effective_rating = float(profile.contestRating)
+            rating_points = max(0.0, (effective_rating - RATING_FLOOR) * RATING_WEIGHT)
         else:
-            effective_rating = RATING_DEFAULT_BASELINE
-
-        rating_points = max(0.0, (effective_rating - RATING_FLOOR) * RATING_WEIGHT)
+            rating_points = 0.0
 
         # 2. Difficulty-weighted solves component
         p = profile.problemStats

@@ -1,6 +1,6 @@
-"""User statistics, activity, and history REST API endpoints."""
 import logging
-from typing import List
+from datetime import datetime
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, BackgroundTasks, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -166,10 +166,29 @@ async def get_user_history(
     request: Request,
     username: str,
     limit: int = Query(default=30, ge=1, le=90, description="Number of snapshots to return (most recent first)"),
+    offset: int = Query(default=0, ge=0, description="Number of snapshots to skip for pagination"),
+    from_date: Optional[datetime] = Query(default=None, description="Filter snapshots taken on or after this timestamp"),
+    to_date: Optional[datetime] = Query(default=None, description="Filter snapshots taken on or before this timestamp"),
     db: AsyncSession = Depends(get_db),
+    client: LeetCodeClient = Depends(get_leetcode_client),
 ) -> UserHistoryResponse:
     username = validate_username_str(username)
-    snapshots = await get_user_snapshots(db, username=username, limit=limit)
+
+    # Verify user exists: check DB first; if not in DB, verify with upstream LeetCode
+    user_res = await db.execute(select(User).where(User.username == username))
+    user = user_res.scalar_one_or_none()
+    if user is None:
+        # If user does not exist on LeetCode, client raises UserNotFoundError (HTTP 404)
+        await client.get_user_profile(username=username)
+
+    snapshots = await get_user_snapshots(
+        db,
+        username=username,
+        limit=limit,
+        offset=offset,
+        from_date=from_date,
+        to_date=to_date,
+    )
     return UserHistoryResponse(
         username=username,
         snapshotCount=len(snapshots),

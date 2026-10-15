@@ -136,10 +136,10 @@ def test_compute_user_score_unrated():
     profile = _make_profile(username="unrated_coder", rating=0, total=100, easy=50, medium=40, hard=10)
 
     breakdown = service.compute_user_score(profile=profile)
-    # Default baseline 1500 -> (1500 - 1200) * 0.5 = 150.0
-    assert breakdown.ratingScore == 150.0
+    # Unrated user receives 0.0 rating points so active contestants are not penalized
+    assert breakdown.ratingScore == 0.0
     assert breakdown.difficultyScore == (50 * 1.0) + (40 * 3.0) + (10 * 6.0)
-    assert breakdown.totalScore > 0
+    assert breakdown.totalScore == breakdown.difficultyScore
 
 
 # ---------------------------------------------------------------------------

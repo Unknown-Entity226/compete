@@ -90,3 +90,35 @@ async def test_server_error_handling():
         await client._execute_query("query { test }", {}, client=mock_http)
     await mock_http.aclose()
 
+
+@pytest.mark.asyncio
+async def test_get_question_details():
+    """Test get_question_details parses question number, difficulty, and tags."""
+    client = LeetCodeClient()
+
+    def mock_transport(request):
+        return httpx.Response(
+            status_code=200,
+            json={
+                "data": {
+                    "question": {
+                        "questionFrontendId": "1",
+                        "title": "Two Sum",
+                        "titleSlug": "two-sum",
+                        "difficulty": "Easy",
+                        "topicTags": [{"name": "Array", "slug": "array"}],
+                    }
+                }
+            },
+        )
+
+    mock_http = httpx.AsyncClient(transport=httpx.MockTransport(mock_transport))
+    details = await client.get_question_details("two-sum", client=mock_http)
+    await mock_http.aclose()
+
+    assert details is not None
+    assert details["frontendQuestionId"] == 1
+    assert details["title"] == "Two Sum"
+    assert details["difficulty"] == "Easy"
+    assert details["topicTags"] == ["Array"]
+

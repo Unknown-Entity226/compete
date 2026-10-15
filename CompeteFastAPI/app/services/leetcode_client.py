@@ -5,6 +5,7 @@ error normalization, and transforms raw responses into validated Pydantic models
 """
 import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import httpx
@@ -20,6 +21,29 @@ from app.schemas.problem import ProblemStatusItem, UserProblemsResponse
 from app.schemas.activity import SubmissionItem, UserActivityResponse
 
 logger = logging.getLogger(__name__)
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+]
+
+QUESTION_DATA_QUERY = """
+query getQuestionData($titleSlug: String!) {
+  question(titleSlug: $titleSlug) {
+    questionFrontendId
+    title
+    titleSlug
+    difficulty
+    topicTags {
+      name
+      slug
+    }
+  }
+}
+"""
 
 USER_PROFILE_QUERY = """
 query getUserProfile($username: String!) {
@@ -124,10 +148,11 @@ class LeetCodeClient:
         try:
             for attempt in range(1, self.max_retries + 1):
                 try:
+                    headers = {**self.headers, "User-Agent": random.choice(USER_AGENTS)}
                     response = await client.post(
                         self.base_url,
                         json=payload,
-                        headers=self.headers,
+                        headers=headers,
                     )
                     
                     if response.status_code == 429:
@@ -338,4 +363,32 @@ class LeetCodeClient:
             total=len(problems),
             problems=problems,
         )
+
+    async def get_question_details(
+        self,
+        title_slug: str,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch problem details including frontend question ID, difficulty, and topic tags."""
+        try:
+            data = await self._execute_query(
+                QUESTION_DATA_QUERY,
+                variables={"titleSlug": title_slug},
+                client=client,
+            )
+            q = data.get("question")
+            if not q:
+                return None
+            frontend_id_raw = q.get("questionFrontendId")
+            frontend_id = int(frontend_id_raw) if frontend_id_raw and str(frontend_id_raw).isdigit() else None
+            return {
+                "frontendQuestionId": frontend_id,
+                "title": q.get("title"),
+                "titleSlug": q.get("titleSlug"),
+                "difficulty": q.get("difficulty", "Unknown"),
+                "topicTags": [t.get("name") for t in (q.get("topicTags") or []) if t.get("name")],
+            }
+        except Exception as exc:
+            logger.debug("Failed to fetch question details for '%s': %s", title_slug, exc)
+            return None
 

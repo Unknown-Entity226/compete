@@ -1,1 +1,34 @@
-Generic single-database configuration.
+# Alembic Database Migrations for CompeteFastAPI
+
+This directory contains the SQLAlchemy migration environment and revision scripts for the `CompeteFastAPI` PostgreSQL database.
+
+## Migration Commands
+
+### Apply Pending Migrations
+Apply all unapplied schema migrations to the target database:
+```bash
+alembic upgrade head
+```
+
+### Revert Migrations
+Roll back the most recently applied migration:
+```bash
+alembic downgrade -1
+```
+
+### Generate a New Migration
+Autogenerate a new revision script after modifying SQLAlchemy ORM models:
+```bash
+alembic revision --autogenerate -m "describe_schema_change"
+```
+
+### View Migration History & Current Head
+```bash
+alembic current
+alembic history --verbose
+```
+
+## Structure
+* `env.py`: Async migration runner configuring the target SQLAlchemy metadata and connection pool.
+* `script.py.mako`: Template used by Alembic to generate new revision files.
+* `versions/`: Directory containing linear versioned Python migration scripts.

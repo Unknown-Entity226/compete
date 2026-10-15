@@ -7,20 +7,21 @@ from app.core.config import settings
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract the real client IP address, respecting reverse proxy headers.
+    """Extract the real client IP address, sanitizing reverse proxy headers.
 
-    Checks X-Forwarded-For (first IP in chain) and X-Real-IP headers before
-    falling back to the direct socket address. Required for correct per-client
-    rate limiting when deployed behind Nginx, Docker bridge networking,
-    AWS ALB, or Cloudflare.
+    Only respects X-Forwarded-For and X-Real-IP if the direct client connection
+    originates from a trusted reverse proxy (e.g. localhost, internal docker/ALB proxy).
+    Otherwise returns the direct socket address to prevent rate limiter spoofing.
     """
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        # X-Forwarded-For may be a comma-separated list; the first IP is the real client
-        return forwarded_for.split(",")[0].strip()
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
+    client_host = request.client.host if request.client else None
+    if client_host and client_host in settings.TRUSTED_PROXIES:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            # X-Forwarded-For may be a comma-separated list; first IP is client
+            return forwarded_for.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
     return get_remote_address(request)
 
 

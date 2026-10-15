@@ -222,6 +222,21 @@ async def test_get_user_snapshots_returns_ordered(async_db_session):
     # Most recent first
     assert snapshots[0].total_solved > snapshots[1].total_solved
 
+    # Pagination offset test
+    page_2 = await get_user_snapshots(async_db_session, "history_coder", limit=2, offset=2)
+    assert len(page_2) == 2
+    assert page_2[0].id == snapshots[2].id
+
+    # Date filter test
+    now = datetime.now(timezone.utc)
+    filtered = await get_user_snapshots(
+        async_db_session,
+        "history_coder",
+        from_date=now - timedelta(days=2),
+    )
+    assert len(filtered) >= 1
+    assert all(s.snapshot_at >= now - timedelta(days=2, hours=1) for s in filtered)
+
 
 @pytest.mark.asyncio
 async def test_get_latest_snapshot(async_db_session):

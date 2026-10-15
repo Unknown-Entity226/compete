@@ -62,17 +62,20 @@ async def compute_solving_velocity(
     user_id: uuid.UUID,
     current_total: int,
     window_days: int,
+    grace_days: Optional[int] = None,
 ) -> float:
     """Calculate average daily solve rate over the last N days.
 
-    Finds the oldest snapshot *within* the window (i.e. snapshot_at >= cutoff)
-    and computes (current_total - baseline_total) / elapsed_days.
+    Finds the oldest snapshot within the window (i.e. snapshot_at >= cutoff).
+    If no snapshot exists strictly inside the window, checks for a baseline
+    immediately adjacent to the window boundary within a grace period.
+    Computes (current_total - baseline_total) / elapsed_days.
 
-    Returns 0.0 if no reference snapshot exists within the window.
+    Returns 0.0 if no reference snapshot exists.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
-    # Oldest snapshot inside the window → gives us the longest possible baseline
+    # 1. Oldest snapshot inside the window → gives us the longest possible baseline
     result = await session.execute(
         select(Statistic)
         .where(
@@ -83,6 +86,23 @@ async def compute_solving_velocity(
         .limit(1)
     )
     reference_snapshot = result.scalar_one_or_none()
+
+    # 2. Boundary grace fallback: find snapshot immediately adjacent before cutoff
+    if reference_snapshot is None:
+        if grace_days is None:
+            grace_days = max(1, window_days // 4)
+        boundary_cutoff = cutoff - timedelta(days=grace_days)
+        result_grace = await session.execute(
+            select(Statistic)
+            .where(
+                Statistic.user_id == user_id,
+                Statistic.snapshot_at >= boundary_cutoff,
+                Statistic.snapshot_at < cutoff,
+            )
+            .order_by(Statistic.snapshot_at.desc())
+            .limit(1)
+        )
+        reference_snapshot = result_grace.scalar_one_or_none()
 
     if reference_snapshot is None:
         return 0.0
@@ -159,15 +179,23 @@ async def get_user_snapshots(
     session: AsyncSession,
     username: str,
     limit: int = 30,
+    offset: int = 0,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
 ) -> List[Statistic]:
-    """Retrieve the most recent N historical snapshots for a user."""
-    result = await session.execute(
+    """Retrieve historical snapshots for a user with optional pagination and date filters."""
+    query = (
         select(Statistic)
         .join(User, User.id == Statistic.user_id)
         .where(User.username == username)
-        .order_by(Statistic.snapshot_at.desc())
-        .limit(limit)
     )
+    if from_date is not None:
+        query = query.where(Statistic.snapshot_at >= from_date)
+    if to_date is not None:
+        query = query.where(Statistic.snapshot_at <= to_date)
+
+    query = query.order_by(Statistic.snapshot_at.desc()).offset(offset).limit(limit)
+    result = await session.execute(query)
     return list(result.scalars().all())
 
 

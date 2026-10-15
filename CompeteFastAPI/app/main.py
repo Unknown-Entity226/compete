@@ -53,11 +53,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting up CompeteFastAPI backend version %s", settings.APP_VERSION)
 
     # Initialize database schema (create tables if they don't exist)
-    try:
-        await init_db()
-        logger.info("Database schema initialized.")
-    except Exception as exc:
-        logger.warning("Database schema initialization skipped: %s", exc)
+    if settings.INIT_DB_ON_STARTUP:
+        try:
+            await init_db()
+            logger.info("Database schema initialized.")
+        except Exception as exc:
+            logger.warning("Database schema initialization skipped: %s", exc)
 
     # Initialize cache
     cache = get_cache_service()
@@ -164,6 +165,25 @@ async def health_check(response: Response):
     # 3. Probe Scheduler
     scheduler_info = get_scheduler_status()
 
+    # 4. Probe Upstream LeetCode
+    upstream_status = "unreachable"
+    upstream_latency_ms = None
+    try:
+        start_up = time.perf_counter()
+        async with httpx.AsyncClient(timeout=2.0) as http_client:
+            res = await http_client.post(
+                settings.LEETCODE_GRAPHQL_URL,
+                json={"query": "query { __typename }"},
+                headers={"Content-Type": "application/json"},
+            )
+            if res.status_code in (200, 400):
+                upstream_status = "healthy"
+            else:
+                upstream_status = f"degraded (HTTP {res.status_code})"
+            upstream_latency_ms = round((time.perf_counter() - start_up) * 1000, 2)
+    except Exception as exc:
+        logger.debug("Upstream LeetCode probe failed: %s", exc)
+
     # Evaluate overall system health
     if db_status == "healthy" and cache_info.get("status") in ("connected", "healthy"):
         overall_status = "healthy"
@@ -185,6 +205,10 @@ async def health_check(response: Response):
         },
         "cache": cache_info,
         "scheduler": scheduler_info,
+        "upstreamLeetCode": {
+            "status": upstream_status,
+            "latencyMs": upstream_latency_ms,
+        },
     }
 
 
