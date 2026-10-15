@@ -231,3 +231,4 @@ def test_streak_counts_wrong_answer_submissions():
     streak = CompetitionService.calculate_streak(submissions, reference_time=now)
     # Streak is 2 even though user NEVER solved any problem!
     assert streak == 2
+
