@@ -2,9 +2,12 @@
 import asyncio
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import get_leetcode_client, get_competition_service
+from app.core.config import settings
+from app.core.limiter import limiter
+from app.core.validation import validate_username_str
 from app.db.session import async_session_factory
 from app.models.statistic import Statistic
 from app.services.leetcode_client import LeetCodeClient
@@ -48,12 +51,16 @@ async def _safe_get_snapshot(username: str) -> Optional[Statistic]:
         "a multi-factor competition duel score."
     ),
 )
+@limiter.limit(settings.RATE_LIMIT_COMPARE)
 async def compare_users(
+    request: Request,
     first_user: str,
     second_user: str,
     client: LeetCodeClient = Depends(get_leetcode_client),
     competition_service: CompetitionService = Depends(get_competition_service),
 ) -> CompareResponse:
+    first_user = validate_username_str(first_user)
+    second_user = validate_username_str(second_user)
     # Query both profiles, activity streams, and historical DB snapshots concurrently
     (
         (first_profile, second_profile),

@@ -40,6 +40,11 @@ class Settings(BaseSettings):
 
     # Rate Limiting (SlowAPI)
     DEFAULT_RATE_LIMIT: str = "60/minute"
+    RATE_LIMIT_COMPARE: str = "30/minute"
+
+    # Background Scheduler (APScheduler)
+    SNAPSHOT_SYNC_INTERVAL_HOURS: int = 1
+    ENABLE_BACKGROUND_SCHEDULER: bool = True
     
     @field_validator("DATABASE_URL", mode="after")
     @classmethod

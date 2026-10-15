@@ -1,11 +1,14 @@
 """User statistics, activity, and history REST API endpoints."""
 import logging
 from typing import List
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, BackgroundTasks, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_leetcode_client, get_db
+from app.core.config import settings
+from app.core.limiter import limiter
+from app.core.validation import validate_username_str
 from app.db.session import async_session_factory
 from app.models.user import User
 from app.services.leetcode_client import LeetCodeClient
@@ -86,11 +89,14 @@ async def _persist_submissions(
         "ranking, and top topic areas. Persists a statistics snapshot in the background."
     ),
 )
+@limiter.limit(settings.DEFAULT_RATE_LIMIT)
 async def get_user_profile(
+    request: Request,
     username: str,
     background_tasks: BackgroundTasks,
     client: LeetCodeClient = Depends(get_leetcode_client),
 ) -> UserProfileResponse:
+    username = validate_username_str(username)
     profile = await client.get_user_profile(username=username)
     # Persist snapshot asynchronously in the background
     background_tasks.add_task(_persist_profile_snapshot, profile)
@@ -103,12 +109,15 @@ async def get_user_profile(
     summary="Get user's solved problems",
     description="Returns problem status list for the specified LeetCode user.",
 )
+@limiter.limit(settings.DEFAULT_RATE_LIMIT)
 async def get_user_problems(
+    request: Request,
     username: str,
     background_tasks: BackgroundTasks,
     limit: int = Query(default=50, ge=1, le=100, description="Maximum number of problems to return"),
     client: LeetCodeClient = Depends(get_leetcode_client),
 ) -> UserProblemsResponse:
+    username = validate_username_str(username)
     problems_response = await client.get_user_problems(username=username, limit=limit)
     background_tasks.add_task(_persist_user_problems, username, problems_response.problems)
     return problems_response
@@ -123,12 +132,15 @@ async def get_user_problems(
         "Persists new submissions to the database in the background."
     ),
 )
+@limiter.limit(settings.DEFAULT_RATE_LIMIT)
 async def get_user_activity(
+    request: Request,
     username: str,
     background_tasks: BackgroundTasks,
     limit: int = Query(default=20, ge=1, le=50, description="Maximum number of submissions to return"),
     client: LeetCodeClient = Depends(get_leetcode_client),
 ) -> UserActivityResponse:
+    username = validate_username_str(username)
     activity = await client.get_user_activity(username=username, limit=limit)
     background_tasks.add_task(_persist_submissions, username, activity.submissions)
     return activity
@@ -143,11 +155,14 @@ async def get_user_activity(
         "useful for rendering progress charts and velocity trends."
     ),
 )
+@limiter.limit(settings.DEFAULT_RATE_LIMIT)
 async def get_user_history(
+    request: Request,
     username: str,
     limit: int = Query(default=30, ge=1, le=90, description="Number of snapshots to return (most recent first)"),
     db: AsyncSession = Depends(get_db),
 ) -> UserHistoryResponse:
+    username = validate_username_str(username)
     snapshots = await get_user_snapshots(db, username=username, limit=limit)
     return UserHistoryResponse(
         username=username,
