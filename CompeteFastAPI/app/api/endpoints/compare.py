@@ -1,115 +1,84 @@
 """Head-to-head comparison endpoint."""
 import asyncio
-from datetime import datetime, timezone
-from typing import Dict
+import logging
+from typing import Optional
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_leetcode_client
+from app.api.deps import get_leetcode_client, get_competition_service
+from app.db.session import async_session_factory
+from app.models.statistic import Statistic
 from app.services.leetcode_client import LeetCodeClient
-from app.schemas.compare import (
-    CompareResponse,
-    CompetitionMetrics,
-)
-from app.schemas.user import UserProfileResponse
+from app.services.competition_service import CompetitionService
+from app.services.stats_service import get_latest_snapshot
+from app.schemas.compare import CompareResponse
+from app.schemas.activity import UserActivityResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/compare", tags=["Compare"])
 
 
-def calculate_user_score(profile: UserProfileResponse) -> float:
-    """Calculate weighted competitive score for a profile."""
-    # Rating weight (defaults to baseline 1500 if unrated)
-    rating_baseline = float(profile.contestRating) if profile.contestRating else 1500.0
-    rating_component = rating_baseline * 0.4
-    
-    # Problem solving difficulty weights: Easy: 1.0, Medium: 3.0, Hard: 6.0
-    p = profile.problemStats
-    problem_component = (p.easy * 1.0) + (p.medium * 3.0) + (p.hard * 6.0)
-    
-    return round(rating_component + problem_component, 2)
+async def _safe_get_activity(
+    client: LeetCodeClient, username: str
+) -> Optional[UserActivityResponse]:
+    """Fetch user activity safely without blocking comparison on upstream failure."""
+    try:
+        return await client.get_user_activity(username=username, limit=20)
+    except Exception as exc:
+        logger.debug("Could not fetch recent activity for '%s': %s", username, exc)
+        return None
+
+
+async def _safe_get_snapshot(username: str) -> Optional[Statistic]:
+    """Retrieve the latest DB snapshot safely if database is accessible."""
+    try:
+        async with async_session_factory() as session:
+            return await get_latest_snapshot(session, username)
+    except Exception as exc:
+        logger.debug("Database snapshot lookup skipped for '%s': %s", username, exc)
+        return None
 
 
 @router.get(
     "/{first_user}/{second_user}",
     response_model=CompareResponse,
     summary="Compare two LeetCode users head-to-head",
-    description="Fetches both profiles concurrently, computes duel metrics and winner score.",
+    description=(
+        "Concurrently fetches both user profiles and activity, analyzes contest ratings, "
+        "difficulty-weighted solves, solving velocity, and consistency streaks to compute "
+        "a multi-factor competition duel score."
+    ),
 )
 async def compare_users(
     first_user: str,
     second_user: str,
     client: LeetCodeClient = Depends(get_leetcode_client),
+    competition_service: CompetitionService = Depends(get_competition_service),
 ) -> CompareResponse:
-    # Query both profiles concurrently
-    first_profile, second_profile = await asyncio.gather(
-        client.get_user_profile(first_user),
-        client.get_user_profile(second_user),
+    # Query both profiles, activity streams, and historical DB snapshots concurrently
+    (
+        (first_profile, second_profile),
+        (first_activity, second_activity),
+        (first_snapshot, second_snapshot),
+    ) = await asyncio.gather(
+        asyncio.gather(
+            client.get_user_profile(first_user),
+            client.get_user_profile(second_user),
+        ),
+        asyncio.gather(
+            _safe_get_activity(client, first_user),
+            _safe_get_activity(client, second_user),
+        ),
+        asyncio.gather(
+            _safe_get_snapshot(first_user),
+            _safe_get_snapshot(second_user),
+        ),
     )
 
-    first_score = calculate_user_score(first_profile)
-    second_score = calculate_user_score(second_profile)
-
-    winner = None
-    if first_score > second_score:
-        winner = first_profile.username
-    elif second_score > first_score:
-        winner = second_profile.username
-    else:
-        winner = "TIE"
-
-    # Higher ranked user (smaller ranking number is better)
-    higher_ranked = None
-    if first_profile.globalRanking and second_profile.globalRanking:
-        higher_ranked = first_profile.username if first_profile.globalRanking < second_profile.globalRanking else second_profile.username
-    elif first_profile.globalRanking:
-        higher_ranked = first_profile.username
-    elif second_profile.globalRanking:
-        higher_ranked = second_profile.username
-
-    rating_diff = None
-    if first_profile.contestRating is not None and second_profile.contestRating is not None:
-        rating_diff = first_profile.contestRating - second_profile.contestRating
-
-    metrics = CompetitionMetrics(
-        ratingDiff=rating_diff,
-        totalSolvedDiff=first_profile.problemStats.total - second_profile.problemStats.total,
-        easyDiff=first_profile.problemStats.easy - second_profile.problemStats.easy,
-        mediumDiff=first_profile.problemStats.medium - second_profile.problemStats.medium,
-        hardDiff=first_profile.problemStats.hard - second_profile.problemStats.hard,
-        higherRankedUser=higher_ranked,
+    return await competition_service.compare_profiles(
+        first_profile=first_profile,
+        second_profile=second_profile,
+        first_activity=first_activity,
+        second_activity=second_activity,
+        first_snapshot=first_snapshot,
+        second_snapshot=second_snapshot,
     )
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    # Frontend-compatible competitionData payload
-    competition_data = {
-        "lastUpdated": now_iso,
-        "users": [
-            {
-                "leetcodeId": first_profile.username,
-                "contestRating": first_profile.contestRating,
-                "problemStats": first_profile.problemStats.model_dump(),
-                "strongestArea": first_profile.strongestArea,
-                "topicStats": [t.model_dump() for t in first_profile.topicStats[:5]],
-            },
-            {
-                "leetcodeId": second_profile.username,
-                "contestRating": second_profile.contestRating,
-                "problemStats": second_profile.problemStats.model_dump(),
-                "strongestArea": second_profile.strongestArea,
-                "topicStats": [t.model_dump() for t in second_profile.topicStats[:5]],
-            },
-        ],
-    }
-
-    return CompareResponse(
-        comparisonId=f"{first_profile.username}-vs-{second_profile.username}",
-        lastUpdated=now_iso,
-        winner=winner,
-        score={
-            first_profile.username: first_score,
-            second_profile.username: second_score,
-        },
-        metrics=metrics,
-        competitionData=competition_data,
-    )
-

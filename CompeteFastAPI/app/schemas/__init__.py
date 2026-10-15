@@ -2,7 +2,7 @@
 from app.schemas.user import ProblemStats, TopicStat, UserProfileResponse
 from app.schemas.problem import ProblemStatusItem, UserProblemsResponse
 from app.schemas.activity import SubmissionItem, UserActivityResponse
-from app.schemas.compare import CompetitorStats, CompetitionMetrics, CompareResponse
+from app.schemas.compare import CompetitorStats, CompetitionMetrics, CompareResponse, ScoreBreakdown
 from app.schemas.history import SnapshotEntry, UserHistoryResponse
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "CompetitorStats",
     "CompetitionMetrics",
     "CompareResponse",
+    "ScoreBreakdown",
     "SnapshotEntry",
     "UserHistoryResponse",
 ]

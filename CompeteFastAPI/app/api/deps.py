@@ -8,6 +8,7 @@ from app.db.session import async_session_factory
 from app.services.cache_service import CacheService
 from app.services.leetcode_client import LeetCodeClient
 from app.services.cached_leetcode_client import CachedLeetCodeClient
+from app.services.competition_service import CompetitionService
 
 
 @lru_cache()
@@ -22,6 +23,12 @@ def get_leetcode_client() -> Union[CachedLeetCodeClient, LeetCodeClient]:
     cache = get_cache_service()
     raw_client = LeetCodeClient()
     return CachedLeetCodeClient(leetcode_client=raw_client, cache_service=cache)
+
+
+@lru_cache()
+def get_competition_service() -> CompetitionService:
+    """Dependency that returns a singleton CompetitionService instance."""
+    return CompetitionService()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

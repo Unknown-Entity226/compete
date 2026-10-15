@@ -15,12 +15,14 @@ from app.services.problem_service import (
     record_user_problems,
     get_user_problems_from_db,
 )
+from app.services.competition_service import CompetitionService
 
 __all__ = [
     "SingleFlight",
     "CacheService",
     "LeetCodeClient",
     "CachedLeetCodeClient",
+    "CompetitionService",
     "get_or_create_user",
     "record_snapshot",
     "get_user_snapshots",
