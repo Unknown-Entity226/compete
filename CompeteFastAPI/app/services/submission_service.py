@@ -5,10 +5,10 @@ via the unique submission_id constraint.
 """
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date as Date, datetime, time, timedelta, timezone
 from typing import List
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -98,4 +98,59 @@ async def upsert_submissions(
         return inserted_count
 
     return 0
+
+
+async def get_user_solve_date_timestamps(
+    session: AsyncSession,
+    username: str,
+) -> List[int]:
+    """Return distinct UTC solve dates already recorded for a user."""
+    solve_dates_result = await session.execute(
+        select(func.date(Submission.submitted_at))
+        .join(User, User.id == Submission.user_id)
+        .where(
+            User.username == username,
+            func.lower(Submission.status_display).in_(("accepted", "solved")),
+        )
+        .distinct()
+    )
+
+    timestamps: List[int] = []
+    for value in solve_dates_result.scalars().all():
+        if isinstance(value, datetime):
+            solve_date = value.date()
+        elif isinstance(value, Date):
+            solve_date = value
+        elif isinstance(value, str):
+            try:
+                solve_date = Date.fromisoformat(value)
+            except ValueError:
+                continue
+        else:
+            continue
+        timestamps.append(
+            int(datetime.combine(solve_date, time.min, tzinfo=timezone.utc).timestamp())
+        )
+    return timestamps
+
+
+async def get_user_recent_solve_slugs(
+    session: AsyncSession,
+    username: str,
+    window_days: int,
+    reference_time: datetime | None = None,
+) -> List[str]:
+    """Return distinct accepted problem slugs already stored in a recent window."""
+    cutoff = (reference_time or datetime.now(timezone.utc)) - timedelta(days=window_days)
+    result = await session.execute(
+        select(Submission.problem_slug)
+        .join(User, User.id == Submission.user_id)
+        .where(
+            User.username == username,
+            func.lower(Submission.status_display).in_(("accepted", "solved")),
+            Submission.submitted_at >= cutoff,
+        )
+        .distinct()
+    )
+    return list(result.scalars().all())
 

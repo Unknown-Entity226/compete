@@ -3,7 +3,7 @@
 Wraps the low-level LeetCodeClient with Redis caching, TTL expiration,
 and SingleFlight request coalescing to protect upstream LeetCode servers.
 """
-from typing import Optional
+from typing import Any, Dict, Optional
 import httpx
 
 from app.core.config import settings
@@ -52,6 +52,7 @@ class CachedLeetCodeClient:
         client: Optional[httpx.AsyncClient] = None,
     ) -> UserActivityResponse:
         """Retrieve user activity with 5-minute TTL and request coalescing."""
+        limit = min(max(1, limit), 50)
         normalized_username = username.lower().strip()
         cache_key = f"compete:user:activity:{normalized_username}:{limit}"
 
@@ -73,6 +74,7 @@ class CachedLeetCodeClient:
         client: Optional[httpx.AsyncClient] = None,
     ) -> UserProblemsResponse:
         """Retrieve user problems with 30-minute TTL and request coalescing."""
+        limit = min(max(1, limit), 50)
         normalized_username = username.lower().strip()
         cache_key = f"compete:user:problems:{normalized_username}:{limit}"
 
@@ -86,4 +88,12 @@ class CachedLeetCodeClient:
             serializer=lambda p: p.model_dump(),
             deserializer=lambda d: UserProblemsResponse(**d),
         )
+
+    async def get_question_details(
+        self,
+        title_slug: str,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch metadata for a problem not yet present in the local catalog."""
+        return await self.client.get_question_details(title_slug=title_slug, client=client)
 

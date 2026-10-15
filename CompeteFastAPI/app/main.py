@@ -18,6 +18,7 @@ import time
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import httpx
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
@@ -30,7 +31,7 @@ from app.core.exceptions import (
     UpstreamRateLimitError,
     UpstreamServiceError,
 )
-from app.api.deps import get_cache_service
+from app.api.deps import get_cache_service, set_leetcode_http_client
 from app.api.router import api_router
 from app.db.session import async_session_factory
 from app.db.init_db import init_db
@@ -52,31 +53,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup and shutdown events."""
     logger.info("Starting up CompeteFastAPI backend version %s", settings.APP_VERSION)
 
-    # Initialize database schema (create tables if they don't exist)
-    if settings.INIT_DB_ON_STARTUP:
-        try:
-            await init_db()
-            logger.info("Database schema initialized.")
-        except Exception as exc:
-            logger.warning("Database schema initialization skipped: %s", exc)
-
-    # Initialize cache
+    upstream_http_client = httpx.AsyncClient(
+        timeout=settings.LEETCODE_TIMEOUT_SECONDS,
+        limits=httpx.Limits(
+            max_connections=settings.LEETCODE_HTTP_MAX_CONNECTIONS,
+            max_keepalive_connections=settings.LEETCODE_HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        ),
+    )
+    app.state.http_client = upstream_http_client
+    set_leetcode_http_client(upstream_http_client)
     cache = get_cache_service()
-    cache_info = await cache.health_check()
-    logger.info("Cache service ready (%s on %s)", cache_info["status"], cache_info["backend"])
 
-    # Initialize background scheduler if enabled
-    if settings.ENABLE_BACKGROUND_SCHEDULER:
+    try:
+        # Initialize database schema (create tables if they don't exist)
+        if settings.INIT_DB_ON_STARTUP:
+            try:
+                await init_db()
+                logger.info("Database schema initialized.")
+            except Exception as exc:
+                logger.warning("Database schema initialization skipped: %s", exc)
+
+        cache_info = await cache.health_check()
+        logger.info("Cache service ready (%s on %s)", cache_info["status"], cache_info["backend"])
+
+        if settings.ENABLE_BACKGROUND_SCHEDULER:
+            try:
+                start_scheduler()
+            except Exception as exc:
+                logger.warning("Could not start background scheduler: %s", exc)
+        yield
+    finally:
+        logger.info("Shutting down CompeteFastAPI backend")
         try:
-            start_scheduler()
-        except Exception as exc:
-            logger.warning("Could not start background scheduler: %s", exc)
-
-    yield
-
-    logger.info("Shutting down CompeteFastAPI backend")
-    stop_scheduler()
-    await cache.close()
+            stop_scheduler()
+        finally:
+            try:
+                await cache.close()
+            finally:
+                set_leetcode_http_client(None)
+                await upstream_http_client.aclose()
 
 
 app = FastAPI(
@@ -144,7 +159,7 @@ async def compete_exception_handler(request: Request, exc: CompeteException):
 # Deep Health check endpoint
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
-async def health_check(response: Response):
+async def health_check(request: Request, response: Response):
     """Comprehensive health check endpoint probing DB, Cache, and Scheduler."""
     # 1. Probe Cache
     cache = get_cache_service()
@@ -170,22 +185,29 @@ async def health_check(response: Response):
     upstream_latency_ms = None
     try:
         start_up = time.perf_counter()
-        async with httpx.AsyncClient(timeout=2.0) as http_client:
-            res = await http_client.post(
-                settings.LEETCODE_GRAPHQL_URL,
-                json={"query": "query { __typename }"},
-                headers={"Content-Type": "application/json"},
-            )
-            if res.status_code in (200, 400):
-                upstream_status = "healthy"
-            else:
-                upstream_status = f"degraded (HTTP {res.status_code})"
-            upstream_latency_ms = round((time.perf_counter() - start_up) * 1000, 2)
+        http_client = getattr(request.app.state, "http_client", None)
+        if http_client is None:
+            raise RuntimeError("Shared upstream HTTP client is not initialized")
+        res = await http_client.post(
+            settings.LEETCODE_GRAPHQL_URL,
+            json={"query": "query { __typename }"},
+            headers={"Content-Type": "application/json"},
+            timeout=2.0,
+        )
+        if res.status_code in (200, 400):
+            upstream_status = "healthy"
+        else:
+            upstream_status = f"degraded (HTTP {res.status_code})"
+        upstream_latency_ms = round((time.perf_counter() - start_up) * 1000, 2)
     except Exception as exc:
         logger.debug("Upstream LeetCode probe failed: %s", exc)
 
     # Evaluate overall system health
-    if db_status == "healthy" and cache_info.get("status") in ("connected", "healthy"):
+    if (
+        db_status == "healthy"
+        and cache_info.get("status") in ("connected", "healthy")
+        and upstream_status == "healthy"
+    ):
         overall_status = "healthy"
     elif db_status == "healthy":
         overall_status = "degraded"

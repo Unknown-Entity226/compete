@@ -17,7 +17,7 @@ from app.schemas.compare import (
     ScoreBreakdown,
 )
 from app.schemas.user import UserProfileResponse
-from app.services.leetcode_client import LeetCodeClient
+from app.services.leetcode_client import LeetCodeClientProtocol
 from app.services.stats_service import get_latest_snapshot
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,13 @@ VELOCITY_30D_WEIGHT = 5.0
 STREAK_DAY_WEIGHT = 8.0
 WEEKLY_SOLVE_WEIGHT = 4.0
 MAX_STREAK_POINTS = 100.0
+MAX_RECENT_SUBMISSIONS = 50
 
 
 class CompetitionService:
     """Independent service calculating multi-factor competition metrics and scores."""
 
-    def __init__(self, leetcode_client: Optional[LeetCodeClient] = None):
+    def __init__(self, leetcode_client: Optional[LeetCodeClientProtocol] = None):
         self.leetcode_client = leetcode_client
 
     @staticmethod
@@ -106,14 +107,15 @@ class CompetitionService:
         submissions: List[SubmissionItem],
         window_days: int = 7,
         reference_time: Optional[datetime] = None,
+        additional_slugs: Optional[List[str]] = None,
     ) -> int:
         """Count distinct accepted problems solved within the last N days."""
-        if not submissions:
+        if not submissions and not additional_slugs:
             return 0
 
         now = reference_time or datetime.now(timezone.utc)
         cutoff = now - timedelta(days=window_days)
-        accepted_slugs = set()
+        accepted_slugs = set(additional_slugs or [])
 
         for s in submissions:
             if not s.timestamp:
@@ -123,6 +125,23 @@ class CompetitionService:
                 accepted_slugs.add(s.titleSlug)
 
         return len(accepted_slugs)
+
+    @staticmethod
+    def _activity_covers_window(
+        activity: Optional[UserActivityResponse],
+        window_days: int,
+        reference_time: datetime,
+    ) -> bool:
+        """Whether the capped upstream activity response covers a full window."""
+        if activity is None:
+            return False
+        submissions = activity.submissions
+        if len(submissions) < MAX_RECENT_SUBMISSIONS:
+            return True
+
+        cutoff_timestamp = int((reference_time - timedelta(days=window_days)).timestamp())
+        timestamps = [submission.timestamp for submission in submissions if submission.timestamp]
+        return bool(timestamps) and min(timestamps) <= cutoff_timestamp
 
     def compute_user_score(
         self,
@@ -176,29 +195,73 @@ class CompetitionService:
         second_activity: Optional[UserActivityResponse] = None,
         first_snapshot: Optional[Statistic] = None,
         second_snapshot: Optional[Statistic] = None,
+        first_stored_solve_timestamps: Optional[List[int]] = None,
+        second_stored_solve_timestamps: Optional[List[int]] = None,
+        first_stored_weekly_slugs: Optional[List[str]] = None,
+        second_stored_weekly_slugs: Optional[List[str]] = None,
+        first_stored_monthly_slugs: Optional[List[str]] = None,
+        second_stored_monthly_slugs: Optional[List[str]] = None,
     ) -> CompareResponse:
         """Perform head-to-head comparison between two fully loaded profiles."""
-        # Extract or compute velocities
-        first_v7d = first_snapshot.solving_velocity_7d if first_snapshot else 0.0
-        first_v30d = first_snapshot.solving_velocity_30d if first_snapshot else 0.0
-        second_v7d = second_snapshot.solving_velocity_7d if second_snapshot else 0.0
-        second_v30d = second_snapshot.solving_velocity_30d if second_snapshot else 0.0
-
         # Calculate streaks and weekly solves from activity if available
         first_submissions = first_activity.submissions if first_activity else []
         second_submissions = second_activity.submissions if second_activity else []
 
-        first_streak = self.calculate_streak(first_submissions)
-        second_streak = self.calculate_streak(second_submissions)
+        first_streak = self.calculate_streak(
+            first_submissions,
+            additional_timestamps=first_stored_solve_timestamps,
+        )
+        second_streak = self.calculate_streak(
+            second_submissions,
+            additional_timestamps=second_stored_solve_timestamps,
+        )
 
-        first_weekly = self.calculate_window_solves(first_submissions, window_days=7)
-        second_weekly = self.calculate_window_solves(second_submissions, window_days=7)
+        now = datetime.now(timezone.utc)
+        first_weekly = self.calculate_window_solves(
+            first_submissions,
+            window_days=7,
+            reference_time=now,
+            additional_slugs=first_stored_weekly_slugs,
+        )
+        second_weekly = self.calculate_window_solves(
+            second_submissions,
+            window_days=7,
+            reference_time=now,
+            additional_slugs=second_stored_weekly_slugs,
+        )
 
-        # If DB velocity was 0 but activity exists, derive 7d velocity from activity
+        first_activity_covers_30d = self._activity_covers_window(first_activity, 30, now)
+        second_activity_covers_30d = self._activity_covers_window(second_activity, 30, now)
+
+        first_v7d = first_snapshot.solving_velocity_7d if first_snapshot else 0.0
+        second_v7d = second_snapshot.solving_velocity_7d if second_snapshot else 0.0
         if first_v7d == 0.0 and first_weekly > 0:
             first_v7d = round(first_weekly / 7.0, 2)
         if second_v7d == 0.0 and second_weekly > 0:
             second_v7d = round(second_weekly / 7.0, 2)
+
+        # Use one source for both contestants. Incomplete activity for one side
+        # must not grant the other side an advantage from an older snapshot.
+        if first_activity_covers_30d and second_activity_covers_30d:
+            first_monthly = self.calculate_window_solves(
+                first_submissions,
+                window_days=30,
+                reference_time=now,
+                additional_slugs=first_stored_monthly_slugs,
+            )
+            second_monthly = self.calculate_window_solves(
+                second_submissions,
+                window_days=30,
+                reference_time=now,
+                additional_slugs=second_stored_monthly_slugs,
+            )
+            first_v30d = round(first_monthly / 30.0, 2)
+            second_v30d = round(second_monthly / 30.0, 2)
+        elif first_snapshot is not None and second_snapshot is not None:
+            first_v30d = first_snapshot.solving_velocity_30d
+            second_v30d = second_snapshot.solving_velocity_30d
+        else:
+            first_v30d = second_v30d = 0.0
 
         # Compute scores
         first_breakdown = self.compute_user_score(

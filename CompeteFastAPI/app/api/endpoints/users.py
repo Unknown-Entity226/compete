@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -11,7 +12,8 @@ from app.core.limiter import limiter
 from app.core.validation import validate_username_str
 from app.db.session import async_session_factory
 from app.models.user import User
-from app.services.leetcode_client import LeetCodeClient
+from app.models.problem import Problem
+from app.services.leetcode_client import LeetCodeClientProtocol
 from app.services.stats_service import (
     get_or_create_user,
     record_snapshot,
@@ -43,6 +45,7 @@ async def _persist_profile_snapshot(profile: UserProfileResponse) -> None:
 async def _persist_user_problems(
     username: str,
     problems: List[ProblemStatusItem],
+    client: LeetCodeClientProtocol,
 ) -> None:
     """Background task: persist problems and user solve status."""
     try:
@@ -56,7 +59,50 @@ async def _persist_user_problems(
                     username,
                 )
                 return
-            inserted = await record_user_problems(session, user, problems)
+
+            slugs = {problem.titleSlug for problem in problems if problem.titleSlug}
+            existing_result = await session.execute(
+                select(Problem).where(Problem.title_slug.in_(slugs))
+            )
+            existing_problems = list(existing_result.scalars().all())
+            existing_slugs = {problem.title_slug for problem in existing_problems}
+            incomplete_slugs = {
+                problem.title_slug
+                for problem in existing_problems
+                if problem.frontend_question_id is None
+                or problem.difficulty == "Unknown"
+                or problem.topic_tags is None
+            }
+
+        # Keep metadata lookups bounded per request so catalog enrichment does
+        # not turn one user request into dozens of upstream GraphQL calls.
+        missing_slugs = sorted((slugs - existing_slugs) | incomplete_slugs)[:5]
+        semaphore = asyncio.Semaphore(5)
+
+        async def _fetch_details(slug: str):
+            async with semaphore:
+                try:
+                    return slug, await client.get_question_details(slug)
+                except Exception as exc:
+                    logger.debug("Problem metadata lookup failed for '%s': %s", slug, exc)
+                    return slug, None
+
+        detail_results = await asyncio.gather(*(_fetch_details(slug) for slug in missing_slugs))
+        details_by_slug = {
+            slug: details for slug, details in detail_results if details is not None
+        }
+
+        async with async_session_factory() as session:
+            result = await session.execute(select(User).where(User.username == username))
+            user = result.scalar_one_or_none()
+            if user is None:
+                return
+            inserted = await record_user_problems(
+                session,
+                user,
+                problems,
+                problem_details=details_by_slug,
+            )
             await session.commit()
             logger.debug("Background user-problems persisted (%d items) for '%s'", inserted, username)
     except Exception as exc:
@@ -100,7 +146,7 @@ async def get_user_profile(
     request: Request,
     username: str,
     background_tasks: BackgroundTasks,
-    client: LeetCodeClient = Depends(get_leetcode_client),
+    client: LeetCodeClientProtocol = Depends(get_leetcode_client),
 ) -> UserProfileResponse:
     username = validate_username_str(username)
     profile = await client.get_user_profile(username=username)
@@ -120,12 +166,22 @@ async def get_user_problems(
     request: Request,
     username: str,
     background_tasks: BackgroundTasks,
-    limit: int = Query(default=50, ge=1, le=100, description="Maximum number of problems to return"),
-    client: LeetCodeClient = Depends(get_leetcode_client),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+        description="Maximum number requested; LeetCode currently returns at most 50",
+    ),
+    client: LeetCodeClientProtocol = Depends(get_leetcode_client),
 ) -> UserProblemsResponse:
     username = validate_username_str(username)
     problems_response = await client.get_user_problems(username=username, limit=limit)
-    background_tasks.add_task(_persist_user_problems, username, problems_response.problems)
+    background_tasks.add_task(
+        _persist_user_problems,
+        username,
+        problems_response.problems,
+        client,
+    )
     return problems_response
 
 
@@ -144,7 +200,7 @@ async def get_user_activity(
     username: str,
     background_tasks: BackgroundTasks,
     limit: int = Query(default=20, ge=1, le=50, description="Maximum number of submissions to return"),
-    client: LeetCodeClient = Depends(get_leetcode_client),
+    client: LeetCodeClientProtocol = Depends(get_leetcode_client),
 ) -> UserActivityResponse:
     username = validate_username_str(username)
     activity = await client.get_user_activity(username=username, limit=limit)
@@ -170,7 +226,7 @@ async def get_user_history(
     from_date: Optional[datetime] = Query(default=None, description="Filter snapshots taken on or after this timestamp"),
     to_date: Optional[datetime] = Query(default=None, description="Filter snapshots taken on or before this timestamp"),
     db: AsyncSession = Depends(get_db),
-    client: LeetCodeClient = Depends(get_leetcode_client),
+    client: LeetCodeClientProtocol = Depends(get_leetcode_client),
 ) -> UserHistoryResponse:
     username = validate_username_str(username)
 

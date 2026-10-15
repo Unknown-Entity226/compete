@@ -6,7 +6,7 @@ user-to-problem solve states in the user_problems table.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,7 @@ async def record_user_problems(
     session: AsyncSession,
     user: User,
     problems: List[ProblemStatusItem],
+    problem_details: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> int:
     """Upsert problems and user-problem associations.
 
@@ -55,6 +56,7 @@ async def record_user_problems(
     existing_problems = {p.title_slug: p for p in existing_problems_res.scalars().all()}
 
     # Insert any missing problems atomically
+    problem_details = problem_details or {}
     missing_problems_by_slug = {}
     for item in problems:
         if (
@@ -64,10 +66,11 @@ async def record_user_problems(
         ):
             missing_problems_by_slug[item.titleSlug] = {
                 "id": uuid.uuid4(),
-                "frontend_question_id": None,
+                "frontend_question_id": problem_details.get(item.titleSlug, {}).get("frontendQuestionId"),
                 "title": item.title,
                 "title_slug": item.titleSlug,
-                "difficulty": item.difficulty or "Unknown",
+                "difficulty": problem_details.get(item.titleSlug, {}).get("difficulty") or item.difficulty or "Unknown",
+                "topic_tags": problem_details.get(item.titleSlug, {}).get("topicTags"),
             }
 
     if missing_problems_by_slug:
@@ -99,6 +102,15 @@ async def record_user_problems(
         problem = existing_problems.get(item.titleSlug)
         if problem is None:
             continue
+
+        details = problem_details.get(item.titleSlug)
+        if details:
+            if details.get("frontendQuestionId") is not None:
+                problem.frontend_question_id = details["frontendQuestionId"]
+            if details.get("difficulty"):
+                problem.difficulty = details["difficulty"]
+            if details.get("topicTags") is not None:
+                problem.topic_tags = details["topicTags"]
 
         solved_datetime = None
         if item.timestamp:

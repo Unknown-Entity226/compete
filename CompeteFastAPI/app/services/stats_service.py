@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import uuid
 
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -124,8 +124,8 @@ async def record_snapshot(
     """Persist a historical statistics snapshot for a user.
 
     Calculates 7-day and 30-day solving velocity from prior snapshots,
-    then inserts a new Statistic row. If a recent snapshot exists within
-    min_interval_seconds with identical total_solved, avoids duplicate insertion.
+    then inserts a new Statistic row. If all tracked metrics are unchanged,
+    avoids a second snapshot within min_interval_seconds.
     """
     if min_interval_seconds is None:
         min_interval_seconds = settings.SNAPSHOT_MIN_INTERVAL_SECONDS
@@ -136,7 +136,15 @@ async def record_snapshot(
         latest = await get_latest_snapshot(session, user.username)
         if latest is not None:
             elapsed = (datetime.now(timezone.utc) - latest.snapshot_at).total_seconds()
-            if elapsed < min_interval_seconds and latest.total_solved == current_total:
+            same_metrics = (
+                latest.total_solved == current_total
+                and latest.easy_solved == profile.problemStats.easy
+                and latest.medium_solved == profile.problemStats.medium
+                and latest.hard_solved == profile.problemStats.hard
+                and latest.contest_rating == profile.contestRating
+                and latest.global_ranking == profile.globalRanking
+            )
+            if elapsed < min_interval_seconds and same_metrics:
                 logger.debug(
                     "Skipping duplicate snapshot for '%s': last snapshot was %.1fs ago (< %ds limit)",
                     user.username,
@@ -173,6 +181,19 @@ async def record_snapshot(
         velocity_30d,
     )
     return snapshot
+
+
+async def prune_old_snapshots(
+    session: AsyncSession,
+    retention_days: Optional[int] = None,
+) -> int:
+    """Delete snapshots beyond the configured history retention window."""
+    retention_days = retention_days or settings.SNAPSHOT_RETENTION_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    result = await session.execute(
+        delete(Statistic).where(Statistic.snapshot_at < cutoff)
+    )
+    return max(0, result.rowcount or 0)
 
 
 async def get_user_snapshots(

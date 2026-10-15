@@ -28,5 +28,6 @@ def get_client_ip(request: Request) -> str:
 limiter = Limiter(
     key_func=get_client_ip,
     default_limits=[settings.DEFAULT_RATE_LIMIT],
+    storage_uri=settings.REDIS_URL,
     headers_enabled=False,
 )

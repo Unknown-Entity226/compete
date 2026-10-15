@@ -7,7 +7,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 import httpx
 
 from app.core.config import settings
@@ -105,6 +105,34 @@ query getRecentSubmissions($username: String!, $limit: Int!) {
 """
 
 
+class LeetCodeClientProtocol(Protocol):
+    """Operations shared by the raw and cached LeetCode clients."""
+
+    async def get_user_profile(
+        self, username: str, client: Optional[httpx.AsyncClient] = None
+    ) -> UserProfileResponse: ...
+
+    async def get_user_activity(
+        self,
+        username: str,
+        limit: int = 20,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> UserActivityResponse: ...
+
+    async def get_user_problems(
+        self,
+        username: str,
+        limit: int = 50,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> UserProblemsResponse: ...
+
+    async def get_question_details(
+        self,
+        title_slug: str,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> Optional[Dict[str, Any]]: ...
+
+
 class LeetCodeClient:
     """Asynchronous client for interacting with LeetCode's GraphQL API."""
 
@@ -114,11 +142,13 @@ class LeetCodeClient:
         timeout: float = settings.LEETCODE_TIMEOUT_SECONDS,
         max_retries: int = settings.LEETCODE_MAX_RETRIES,
         backoff_factor: float = settings.LEETCODE_BACKOFF_FACTOR,
+        http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.base_url = base_url
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
+        self.http_client = http_client
         self.headers = {
             "Content-Type": "application/json",
             "User-Agent": (
@@ -129,6 +159,10 @@ class LeetCodeClient:
             "Referer": "https://leetcode.com",
             "Origin": "https://leetcode.com",
         }
+
+    def set_http_client(self, client: Optional[httpx.AsyncClient]) -> None:
+        """Use the application-lifespan connection pool for upstream requests."""
+        self.http_client = client
 
     async def _execute_query(
         self,
@@ -141,6 +175,8 @@ class LeetCodeClient:
         last_exception: Optional[Exception] = None
 
         close_client = False
+        if client is None:
+            client = self.http_client
         if client is None:
             client = httpx.AsyncClient(timeout=self.timeout)
             close_client = True
@@ -183,7 +219,12 @@ class LeetCodeClient:
                         continue
 
                     response.raise_for_status()
-                    data = response.json()
+                    try:
+                        data = response.json()
+                    except ValueError as exc:
+                        raise UpstreamServiceError(
+                            "LeetCode returned a non-JSON response"
+                        ) from exc
 
                     # Handle GraphQL top-level errors if any
                     if "errors" in data and not data.get("data"):
@@ -192,7 +233,14 @@ class LeetCodeClient:
 
                     return data.get("data", {})
 
-                except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                except httpx.HTTPStatusError as exc:
+                    status_code = exc.response.status_code
+                    logger.warning("LeetCode returned HTTP %d", status_code)
+                    raise UpstreamServiceError(
+                        f"LeetCode returned status code {status_code}"
+                    ) from exc
+
+                except httpx.TransportError as exc:
                     logger.warning(
                         "Network error querying LeetCode on attempt %d/%d: %s",
                         attempt,
@@ -290,6 +338,7 @@ class LeetCodeClient:
         client: Optional[httpx.AsyncClient] = None,
     ) -> UserActivityResponse:
         """Fetch and normalize user's recent submissions activity."""
+        limit = min(max(1, limit), 50)
         data = await self._execute_query(
             USER_SUBMISSIONS_QUERY,
             variables={"username": username, "limit": limit},
@@ -330,6 +379,7 @@ class LeetCodeClient:
         client: Optional[httpx.AsyncClient] = None,
     ) -> UserProblemsResponse:
         """Fetch accepted problems for a user."""
+        limit = min(max(1, limit), 50)
         data = await self._execute_query(
             USER_SUBMISSIONS_QUERY,
             variables={"username": username, "limit": limit},
