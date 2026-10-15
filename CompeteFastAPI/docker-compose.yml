@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  compete-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: compete_fastapi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_NAME=CompeteFastAPI
+      - APP_VERSION=0.1.0
+      - API_PREFIX=/api
+      - DATABASE_URL=postgresql+asyncpg://compete_user:compete_password@postgres:5432/compete_database
+      - REDIS_URL=redis://redis:6379/0
+      - DEFAULT_RATE_LIMIT=60/minute
+      - RATE_LIMIT_COMPARE=30/minute
+      - SNAPSHOT_MIN_INTERVAL_SECONDS=300
+      - SNAPSHOT_SYNC_INTERVAL_HOURS=1
+      - ENABLE_BACKGROUND_SCHEDULER=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - compete_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: compete_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: compete_user
+      POSTGRES_PASSWORD: compete_password
+      POSTGRES_DB: compete_database
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compete_user -d compete_database"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - compete_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: compete_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - compete_network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  compete_network:
+    driver: bridge
+
