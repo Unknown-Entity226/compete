@@ -271,6 +271,10 @@ class LeetCodeClient:
             client=client,
         )
 
+        # Check if user exists: LeetCode returns null lists for nonexistent users
+        if data.get("recentSubmissionList") is None and data.get("recentAcSubmissionList") is None:
+            raise UserNotFoundError(username)
+
         submissions_raw = data.get("recentSubmissionList") or []
         submissions: List[SubmissionItem] = []
         for item in submissions_raw:
@@ -306,6 +310,10 @@ class LeetCodeClient:
             variables={"username": username, "limit": limit},
             client=client,
         )
+
+        # Check if user exists: LeetCode returns null for nonexistent users
+        if data.get("recentAcSubmissionList") is None:
+            raise UserNotFoundError(username)
 
         ac_raw = data.get("recentAcSubmissionList") or []
         problems: List[ProblemStatusItem] = []

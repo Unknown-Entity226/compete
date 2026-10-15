@@ -50,9 +50,12 @@ async def _persist_user_problems(
             result = await session.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
             if user is None:
-                user = User(username=username)
-                session.add(user)
-                await session.flush()
+                logger.debug(
+                    "Skipping problem persistence for unregistered user '%s': "
+                    "user must be fetched via profile endpoint first.",
+                    username,
+                )
+                return
             inserted = await record_user_problems(session, user, problems)
             await session.commit()
             logger.debug("Background user-problems persisted (%d items) for '%s'", inserted, username)
@@ -70,9 +73,12 @@ async def _persist_submissions(
             result = await session.execute(select(User).where(User.username == username))
             user = result.scalar_one_or_none()
             if user is None:
-                user = User(username=username)
-                session.add(user)
-                await session.flush()
+                logger.debug(
+                    "Skipping submission persistence for unregistered user '%s': "
+                    "user must be fetched via profile endpoint first.",
+                    username,
+                )
+                return
             inserted = await upsert_submissions(session, user, submissions)
             await session.commit()
             logger.debug("Background submissions persisted (%d items) for '%s'", inserted, username)

@@ -3,6 +3,7 @@
 Periodically synchronizes statistics snapshots and velocities for all
 registered users in the database, avoiding stale data without client requests.
 """
+import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Dict, Any, Optional
@@ -24,42 +25,57 @@ _scheduler: Optional[AsyncIOScheduler] = None
 async def sync_tracked_users_snapshots() -> int:
     """Scheduled task: iterate through all users in DB and refresh stats snapshot.
 
+    Fetches only usernames (lightweight query), then processes each user in its
+    own isolated async session and transaction. A brief delay between upstream
+    LeetCode calls avoids triggering rate limits.
+
     Returns the count of successfully refreshed users.
     """
     logger.info("Starting scheduled background user snapshot synchronization...")
     synced_count = 0
     client = get_leetcode_client()
 
+    # Fetch only usernames — lightweight, avoids loading full ORM objects en masse
     try:
         async with async_session_factory() as session:
-            result = await session.execute(select(User))
-            users = result.scalars().all()
-
-            if not users:
-                logger.info("No tracked users in database to sync.")
-                return 0
-
-            for user in users:
-                try:
-                    profile = await client.get_user_profile(user.username)
-                    await record_snapshot(session, user, profile)
-                    synced_count += 1
-                except Exception as exc:
-                    logger.warning(
-                        "Scheduled sync failed for user '%s': %s",
-                        user.username,
-                        exc,
-                    )
-
-            await session.commit()
-            logger.info(
-                "Completed background synchronization: refreshed %d/%d users.",
-                synced_count,
-                len(users),
-            )
+            result = await session.execute(select(User.username))
+            usernames = [row[0] for row in result.fetchall()]
     except Exception as exc:
-        logger.error("Error during scheduled background sync job: %s", exc)
+        logger.error("Failed to fetch tracked usernames for sync: %s", exc)
+        return 0
 
+    if not usernames:
+        logger.info("No tracked users in database to sync.")
+        return 0
+
+    for username in usernames:
+        try:
+            profile = await client.get_user_profile(username)
+            # Each user gets its own session and transaction — failures are isolated
+            async with async_session_factory() as session:
+                result = await session.execute(select(User).where(User.username == username))
+                user = result.scalar_one_or_none()
+                if user is None:
+                    logger.debug("User '%s' disappeared between query and sync; skipping.", username)
+                    continue
+                await record_snapshot(session, user, profile)
+                await session.commit()
+            synced_count += 1
+            logger.debug("Synced snapshot for '%s'.", username)
+        except Exception as exc:
+            logger.warning(
+                "Scheduled sync failed for user '%s': %s",
+                username,
+                exc,
+            )
+        # Brief delay to avoid triggering LeetCode upstream rate limits
+        await asyncio.sleep(0.5)
+
+    logger.info(
+        "Completed background synchronization: refreshed %d/%d users.",
+        synced_count,
+        len(usernames),
+    )
     return synced_count
 
 

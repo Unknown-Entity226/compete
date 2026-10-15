@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import get_leetcode_client, get_competition_service
 from app.core.config import settings
@@ -61,6 +61,11 @@ async def compare_users(
 ) -> CompareResponse:
     first_user = validate_username_str(first_user)
     second_user = validate_username_str(second_user)
+    if first_user.lower() == second_user.lower():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot compare a user against themselves. Please specify two distinct usernames.",
+        )
     # Query both profiles, activity streams, and historical DB snapshots concurrently
     (
         (first_profile, second_profile),

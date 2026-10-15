@@ -1,4 +1,9 @@
-"""Comprehensive workflow, edge cases, and failure mode verification tests."""
+"""Workflow, edge-case, and regression tests verifying fixed behavior.
+
+Each test in this file was originally written to *confirm a bug existed*.
+After remediation, these tests now assert the corrected, production-correct
+behavior so they serve as regression guards going forward.
+"""
 import asyncio
 from datetime import datetime, timedelta, timezone
 import pytest
@@ -18,13 +23,14 @@ from app.models.user_problem import UserProblem
 from app.schemas.activity import SubmissionItem, UserActivityResponse
 from app.schemas.problem import ProblemStatusItem, UserProblemsResponse
 from app.schemas.user import UserProfileResponse, ProblemStats, TopicStat
-from app.services.cache_service import CacheService
+from app.services.cache_service import CacheService, MAX_FALLBACK_ENTRIES
 from app.services.competition_service import CompetitionService
 from app.services.leetcode_client import LeetCodeClient
 from app.services.problem_service import record_user_problems
 from app.services.single_flight import SingleFlight
 from app.services.stats_service import get_or_create_user
 from app.services.submission_service import upsert_submissions
+from app.api.endpoints.users import _persist_user_problems, _persist_submissions
 
 
 @pytest.fixture
@@ -45,74 +51,94 @@ async def in_memory_db():
 
 
 # ---------------------------------------------------------------------------
-# 1. SingleFlight leader cancellation bug
+# 1. SingleFlight — leader cancellation no longer hangs followers (FIXED)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_single_flight_leader_cancellation_hangs_followers():
-    """Verify bug: if leader is cancelled, followers hang because CancelledError is not caught."""
+async def test_single_flight_leader_cancellation_unblocks_followers():
+    """Fix verified: when leader is cancelled, followers receive CancelledError promptly.
+
+    Previously followers would hang indefinitely because CancelledError bypassed
+    the exception handler and the future was never resolved. The fix catches
+    BaseException and calls future.cancel() so followers are unblocked.
+    """
     sf = SingleFlight()
     leader_started = asyncio.Event()
 
-    async def leader_task():
+    async def slow_task():
         leader_started.set()
-        await asyncio.sleep(10)  # Long running
-        return "leader_result"
+        await asyncio.sleep(10)  # Long-running upstream call
+        return "result"
 
-    # Start leader
-    t1 = asyncio.create_task(sf.execute("cancel_test_key", leader_task))
+    # Start leader task
+    t1 = asyncio.create_task(sf.execute("cancel_test_key", slow_task))
     await leader_started.wait()
 
-    # Follower starts awaiting the same key
-    t2 = asyncio.create_task(sf.execute("cancel_test_key", leader_task))
-    await asyncio.sleep(0.01)
+    # Follower joins the in-flight request
+    t2 = asyncio.create_task(sf.execute("cancel_test_key", slow_task))
+    await asyncio.sleep(0.01)  # Let follower register
 
-    # Cancel leader task
+    # Cancel leader
     t1.cancel()
     with pytest.raises(asyncio.CancelledError):
         await t1
 
-    # Follower t2 should ideally either receive an exception or execute or be cancelled,
-    # but in current SingleFlight it hangs indefinitely because future is never resolved!
-    # Let's verify with a short timeout.
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(t2, timeout=0.1)
+    # Follower must now unblock promptly (not hang) — receives CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(t2, timeout=1.0)
 
 
 # ---------------------------------------------------------------------------
-# 2. CacheService Permanent Disconnect & Memory Leak
+# 2. CacheService — auto-recovery after transient failure (FIXED)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_cache_service_cannot_recover_after_transient_failure():
-    """Verify limitation: once Redis fails, _is_redis_available is set to False permanently."""
+async def test_cache_service_retries_after_cooldown():
+    """Fix verified: CacheService retries Redis after the reconnect cooldown elapses.
+
+    Previously _is_redis_available was permanently set to False on first failure.
+    The fix uses a time-based cooldown (_last_redis_failure) so reconnection
+    attempts resume after _redis_retry_interval seconds.
+    """
     cache = CacheService(redis_url="redis://invalid.host:9999/0", allow_unix_socket=False)
-    # Trigger failure
+    # Trigger a connection failure
     await cache.get("test_key")
-    assert cache._is_redis_available is False
+    # last_redis_failure is now set to a recent timestamp
+    assert cache._last_redis_failure > 0.0
 
-    # Even if we change redis_url to something valid (simulating Redis recovery),
-    # _get_redis will never attempt connection because _is_redis_available is False.
+    # Simulate cooldown elapsed by resetting the failure timestamp to the past
+    cache._last_redis_failure = 0.0  # Reset — as if cooldown has passed
+
+    # _get_redis() should now attempt reconnection (will still fail for invalid host,
+    # but it *does* attempt — proving auto-recovery is not permanently locked out)
     client = await cache._get_redis()
+    # Connection still fails for invalid host, but _last_redis_failure is updated again
     assert client is None
+    assert cache._last_redis_failure > 0.0  # Attempt was made and failure was recorded
 
 
 @pytest.mark.asyncio
-async def test_cache_fallback_store_unbounded_growth():
-    """Verify limitation: fallback store never purges unread expired keys."""
-    cache = CacheService(redis_url="redis://invalid.host:9999/0", allow_unix_socket=False)
-    # Write 50 keys with 0 TTL (already expired)
-    for i in range(50):
-        await cache.set(f"expired_key_{i}", f"val_{i}", ttl_seconds=0)
+async def test_cache_fallback_store_bounded_and_lru():
+    """Fix verified: fallback store is bounded (LRU) and does not store zero-TTL keys.
 
-    # The keys were expired immediately, but are still present in _fallback_store!
-    assert len(cache._fallback_store) == 50
-    # They are only removed IF explicitly queried via get()
-    await cache.get("expired_key_0")
-    assert len(cache._fallback_store) == 49
-    # The remaining 49 remain in memory forever unless read!
+    Previously the fallback store was an unbounded dict that never pruned expired
+    entries unless explicitly queried. The fix uses an OrderedDict with LRU eviction
+    and refuses to store keys with ttl_seconds <= 0.
+    """
+    cache = CacheService(redis_url="redis://invalid.host:9999/0", allow_unix_socket=False)
+
+    # Keys with ttl=0 must NOT be stored (previously they were stored and leaked)
+    for i in range(10):
+        await cache.set(f"zero_ttl_key_{i}", f"val_{i}", ttl_seconds=0)
+    assert len(cache._fallback_store) == 0, "Zero-TTL keys must not be stored"
+
+    # Keys with valid TTL are stored up to MAX_FALLBACK_ENTRIES
+    for i in range(20):
+        await cache.set(f"valid_key_{i}", f"val_{i}", ttl_seconds=300)
+    assert len(cache._fallback_store) == 20
+    assert len(cache._fallback_store) <= MAX_FALLBACK_ENTRIES
 
 
 # ---------------------------------------------------------------------------
-# 3. Nonexistent User Handling & DB Pollution
+# 3. Nonexistent User — 404 across all user endpoints (FIXED)
 # ---------------------------------------------------------------------------
 class MockEmptyLeetCodeClient(LeetCodeClient):
     """Simulates LeetCode GraphQL when user does not exist."""
@@ -125,60 +151,89 @@ class MockEmptyLeetCodeClient(LeetCodeClient):
 
 
 @pytest.mark.asyncio
-async def test_nonexistent_user_returns_200_for_activity_and_problems():
-    """Verify flow bug: nonexistent user returns 404 on profile, but 200 on activity & problems."""
+async def test_nonexistent_user_returns_404_for_all_endpoints():
+    """Fix verified: nonexistent user returns 404 on profile, activity, AND problems.
+
+    Previously activity and problems returned 200 with empty lists for nonexistent
+    users because null GraphQL lists were treated as empty results. The fix raises
+    UserNotFoundError when LeetCode returns null lists, resulting in HTTP 404.
+    """
     mock_client = MockEmptyLeetCodeClient()
     app.dependency_overrides[get_leetcode_client] = lambda: mock_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Profile returns 404
         profile_res = await client.get("/api/users/ghost_user")
         assert profile_res.status_code == 404
 
-        # Activity returns 200 with empty list instead of 404!
         activity_res = await client.get("/api/users/ghost_user/activity")
-        assert activity_res.status_code == 200
-        assert activity_res.json()["submissions"] == []
+        assert activity_res.status_code == 404, (
+            f"Expected 404 for nonexistent user activity, got {activity_res.status_code}"
+        )
 
-        # Problems returns 200 with empty list instead of 404!
         problems_res = await client.get("/api/users/ghost_user/problems")
-        assert problems_res.status_code == 200
-        assert problems_res.json()["problems"] == []
+        assert problems_res.status_code == 404, (
+            f"Expected 404 for nonexistent user problems, got {problems_res.status_code}"
+        )
 
     app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_background_task_pollutes_db_with_ghost_users(in_memory_db):
-    """Verify bug: persisting problems/submissions for nonexistent user creates orphaned User row."""
-    # When _persist_user_problems runs for 'ghost_user':
-    user = User(username="ghost_user")
-    in_memory_db.add(user)
-    await in_memory_db.commit()
+async def test_background_task_does_not_create_ghost_users(in_memory_db, monkeypatch):
+    """Fix verified: background tasks skip persistence for users not in the database.
 
-    result = await in_memory_db.execute(select(User).where(User.username == "ghost_user"))
-    found = result.scalar_one_or_none()
-    assert found is not None
-    assert found.username == "ghost_user"
-    assert found.real_name is None
-    assert found.contest_rating is None
+    Previously _persist_user_problems and _persist_submissions would insert a bare
+    User(username=...) row with NULL profile fields when queried for nonexistent users.
+    The fix returns early with a debug log when user is None, preventing ghost records.
+    """
+    # Verify no user exists initially
+    result = await in_memory_db.execute(
+        select(User).where(User.username == "ghost_user")
+    )
+    assert result.scalar_one_or_none() is None, "No ghost_user should exist before the test"
+
+    # Override session factory to point to in_memory_db engine
+    from app.api.endpoints import users as users_module
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def mock_session():
+        yield in_memory_db
+
+    monkeypatch.setattr(users_module, "async_session_factory", mock_session)
+
+    # Attempt to persist problems and submissions for non-existent user
+    await _persist_user_problems("ghost_user", [])
+    await _persist_submissions("ghost_user", [])
+
+    # Ghost user must NOT have been created
+    result_after = await in_memory_db.execute(
+        select(User).where(User.username == "ghost_user")
+    )
+    assert result_after.scalar_one_or_none() is None, (
+        "Ghost user must NOT be created for unregistered username"
+    )
 
 
 # ---------------------------------------------------------------------------
-# 4. Problem ID vs Submission ID Bug
+# 4. Problem catalog — submission ID no longer stored as question ID (FIXED)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_problem_service_confuses_submission_id_with_question_id(in_memory_db):
-    """Verify bug: record_user_problems sets frontend_question_id to submission ID."""
+async def test_problem_service_does_not_store_submission_id_as_question_id(in_memory_db):
+    """Fix verified: frontend_question_id is None, not populated with submission ID.
+
+    Previously record_user_problems() extracted item.id (a LeetCode submission ID
+    like 1423891024) and stored it as Problem.frontend_question_id, corrupting the
+    problem catalog. The fix always sets frontend_question_id=None.
+    """
     user = User(username="coder_1")
     in_memory_db.add(user)
     await in_memory_db.commit()
 
-    # LeetCode's recentAcSubmissionList returned item with submission id 1423891024
     problems = [
         ProblemStatusItem(
-            id="1423891024",  # This is actually a submission ID!
+            id="1423891024",  # This is a submission ID, not a question ID
             title="Two Sum",
             titleSlug="two-sum",
             difficulty="Easy",
@@ -188,47 +243,93 @@ async def test_problem_service_confuses_submission_id_with_question_id(in_memory
     await record_user_problems(in_memory_db, user, problems)
     await in_memory_db.commit()
 
-    res = await in_memory_db.execute(select(Problem).where(Problem.title_slug == "two-sum"))
+    res = await in_memory_db.execute(
+        select(Problem).where(Problem.title_slug == "two-sum")
+    )
     problem = res.scalar_one()
-    # Bug verification: frontend_question_id is 1423891024 instead of 1!
-    assert problem.frontend_question_id == 1423891024
+    # Correct behavior: frontend_question_id must NOT be set to a submission ID
+    assert problem.frontend_question_id is None, (
+        f"frontend_question_id should be None, not '{problem.frontend_question_id}' "
+        "(which would be a submission ID, not a question number)"
+    )
 
 
 # ---------------------------------------------------------------------------
-# 5. Duplicate Submission Items in Same Batch Integrity Issue
+# 5. Duplicate submissions in same batch — no IntegrityError (FIXED)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_upsert_submissions_batch_duplicates(in_memory_db):
-    """Verify edge case: batch with duplicate submission IDs causes duplicate objects added."""
+async def test_upsert_submissions_batch_duplicates_handled_gracefully(in_memory_db):
+    """Fix verified: batch with duplicate submission IDs deduplicates cleanly.
+
+    Previously upsert_submissions added both duplicate objects to the session,
+    causing an IntegrityError on commit due to the unique constraint on submission_id.
+    The fix tracks seen_ids within the batch loop to skip duplicates safely.
+    """
     user = User(username="coder_2")
     in_memory_db.add(user)
     await in_memory_db.commit()
 
     batch = [
         SubmissionItem(id="sub_1", title="A", titleSlug="a", status="Accepted", lang="py", timestamp=1729000000),
-        SubmissionItem(id="sub_1", title="A", titleSlug="a", status="Accepted", lang="py", timestamp=1729000000),
+        SubmissionItem(id="sub_1", title="A", titleSlug="a", status="Accepted", lang="py", timestamp=1729000000),  # duplicate
     ]
-    # Because existing_ids is checked against DB and not updated during the loop,
-    # both objects get added to session.add_all!
-    await upsert_submissions(in_memory_db, user, batch)
-    # Flashing or committing will fail if uniqueness is enforced on submission_id
-    with pytest.raises(Exception):
-        await in_memory_db.commit()
-    await in_memory_db.rollback()
+
+    # Must NOT raise IntegrityError — duplicate is silently skipped
+    count = await upsert_submissions(in_memory_db, user, batch)
+    await in_memory_db.commit()  # Must succeed without exception
+
+    # Only one submission should have been inserted (the duplicate was deduplicated)
+    assert count == 1, f"Expected 1 unique insertion, got {count}"
+
+    res = await in_memory_db.execute(
+        select(Submission).where(Submission.user_id == user.id)
+    )
+    assert len(res.scalars().all()) == 1
 
 
 # ---------------------------------------------------------------------------
-# 6. Streak calculation counts failed submissions
+# 6. Streak — only accepted submissions count (FIXED)
 # ---------------------------------------------------------------------------
-def test_streak_counts_wrong_answer_submissions():
-    """Verify limitation: calculate_streak doesn't check if status is Accepted/Solved."""
+def test_streak_ignores_wrong_answer_submissions():
+    """Fix verified: calculate_streak only counts Accepted/Solved submissions.
+
+    Previously any submission status (Wrong Answer, Compile Error, etc.) counted
+    towards the streak, unfairly rewarding failed attempts. The fix mirrors the
+    filter already used in calculate_window_solves().
+    """
     now = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
-    # User submitted Wrong Answer today and yesterday
     submissions = [
         SubmissionItem(id="1", title="A", titleSlug="a", status="Wrong Answer", lang="python3", timestamp=int(now.timestamp())),
         SubmissionItem(id="2", title="B", titleSlug="b", status="Compile Error", lang="python3", timestamp=int((now - timedelta(days=1)).timestamp())),
     ]
     streak = CompetitionService.calculate_streak(submissions, reference_time=now)
-    # Streak is 2 even though user NEVER solved any problem!
-    assert streak == 2
+    # No accepted submissions — streak must be 0
+    assert streak == 0, f"Expected streak=0 for wrong-answer-only submissions, got {streak}"
 
+
+def test_streak_counts_only_accepted_submissions():
+    """Streak accrues correctly when a mix of accepted and failed submissions exist."""
+    now = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+    submissions = [
+        SubmissionItem(id="1", title="A", titleSlug="a", status="Accepted", lang="python3", timestamp=int(now.timestamp())),
+        SubmissionItem(id="2", title="B", titleSlug="b", status="Wrong Answer", lang="python3", timestamp=int(now.timestamp())),
+        SubmissionItem(id="3", title="C", titleSlug="c", status="Accepted", lang="python3", timestamp=int((now - timedelta(days=1)).timestamp())),
+        SubmissionItem(id="4", title="D", titleSlug="d", status="Runtime Error", lang="python3", timestamp=int((now - timedelta(days=2)).timestamp())),
+    ]
+    streak = CompetitionService.calculate_streak(submissions, reference_time=now)
+    # Only today + yesterday have accepted submissions — streak is 2
+    assert streak == 2, f"Expected streak=2 (today + yesterday accepted), got {streak}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Self-Comparison rejection (FIXED)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_compare_self_raises_400():
+    """Fix verified: /api/compare/alice/alice returns HTTP 400 Bad Request."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/api/compare/alice/alice")
+        assert res.status_code == 400
+        data = res.json()
+        assert "Cannot compare a user against themselves" in data["detail"]

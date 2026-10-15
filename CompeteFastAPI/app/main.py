@@ -15,7 +15,7 @@ from typing import AsyncGenerator
 import logging
 import time
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -33,6 +33,7 @@ from app.core.exceptions import (
 from app.api.deps import get_cache_service
 from app.api.router import api_router
 from app.db.session import async_session_factory
+from app.db.init_db import init_db
 from app.workers.scheduler import (
     start_scheduler,
     stop_scheduler,
@@ -50,7 +51,14 @@ logger = logging.getLogger("compete")
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup and shutdown events."""
     logger.info("Starting up CompeteFastAPI backend version %s", settings.APP_VERSION)
-    
+
+    # Initialize database schema (create tables if they don't exist)
+    try:
+        await init_db()
+        logger.info("Database schema initialized.")
+    except Exception as exc:
+        logger.warning("Database schema initialization skipped: %s", exc)
+
     # Initialize cache
     cache = get_cache_service()
     cache_info = await cache.health_check()
@@ -135,7 +143,7 @@ async def compete_exception_handler(request: Request, exc: CompeteException):
 # Deep Health check endpoint
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
-async def health_check():
+async def health_check(response: Response):
     """Comprehensive health check endpoint probing DB, Cache, and Scheduler."""
     # 1. Probe Cache
     cache = get_cache_service()
@@ -157,12 +165,15 @@ async def health_check():
     scheduler_info = get_scheduler_status()
 
     # Evaluate overall system health
-    if db_status == "healthy" and cache_info.get("status") == "healthy":
+    if db_status == "healthy" and cache_info.get("status") in ("connected", "healthy"):
         overall_status = "healthy"
     elif db_status == "healthy":
         overall_status = "degraded"
     else:
         overall_status = "unhealthy"
+
+    if overall_status == "unhealthy":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return {
         "status": overall_status,

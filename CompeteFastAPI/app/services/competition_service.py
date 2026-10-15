@@ -65,7 +65,7 @@ class CompetitionService:
         # Collect distinct submission dates
         active_dates = set()
         for s in submissions:
-            if s.timestamp:
+            if s.timestamp and (s.status or "").lower() in ("accepted", "solved"):
                 sub_date = datetime.fromtimestamp(s.timestamp, tz=timezone.utc).date()
                 active_dates.add(sub_date)
 

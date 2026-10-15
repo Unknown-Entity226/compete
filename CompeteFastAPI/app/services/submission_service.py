@@ -37,6 +37,7 @@ async def upsert_submissions(
         select(Submission.submission_id).where(Submission.user_id == user.id)
     )
     existing_ids = {row[0] for row in existing_ids_result.fetchall()}
+    seen_ids = set(existing_ids)  # Track IDs encountered during this batch iteration too
 
     # Look up existing problems matching submission slugs
     slugs = {item.titleSlug for item in submissions if item.titleSlug}
@@ -49,8 +50,9 @@ async def upsert_submissions(
 
     new_submissions: List[Submission] = []
     for item in submissions:
-        if item.id in existing_ids:
+        if not item.id or item.id in seen_ids:
             continue
+        seen_ids.add(item.id)  # Mark as seen to prevent within-batch duplicates
         new_submissions.append(
             Submission(
                 user_id=user.id,

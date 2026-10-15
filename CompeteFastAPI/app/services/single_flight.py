@@ -45,9 +45,12 @@ class SingleFlight:
                 if not future.done():
                     future.set_result(result)
                 return result
-            except Exception as exc:
+            except BaseException as exc:
                 if not future.done():
-                    future.set_exception(exc)
+                    if isinstance(exc, asyncio.CancelledError):
+                        future.cancel()
+                    else:
+                        future.set_exception(exc)
                 raise
             finally:
                 async with self._lock:

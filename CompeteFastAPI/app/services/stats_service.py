@@ -88,10 +88,10 @@ async def compute_solving_velocity(
         return 0.0
 
     delta_solved = max(0, current_total - reference_snapshot.total_solved)
-    elapsed_days = max(
-        1,
-        (datetime.now(timezone.utc) - reference_snapshot.snapshot_at).days,
-    )
+    elapsed_seconds = (
+        datetime.now(timezone.utc) - reference_snapshot.snapshot_at
+    ).total_seconds()
+    elapsed_days = max(1.0, elapsed_seconds / 86400.0)
     return round(delta_solved / elapsed_days, 2)
 
 

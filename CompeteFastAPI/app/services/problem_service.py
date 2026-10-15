@@ -5,7 +5,7 @@ user-to-problem solve states in the user_problems table.
 """
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,13 +54,10 @@ async def record_user_problems(
             continue
 
         problem = existing_problems.get(item.titleSlug)
-        question_id: Optional[int] = None
-        if item.id and item.id.isdigit():
-            question_id = int(item.id)
 
         if problem is None:
             problem = Problem(
-                frontend_question_id=question_id,
+                frontend_question_id=None,  # LeetCode item.id is a submission ID, not question ID
                 title=item.title,
                 title_slug=item.titleSlug,
                 difficulty=item.difficulty or "Unknown",
@@ -68,8 +65,8 @@ async def record_user_problems(
             session.add(problem)
             await session.flush()
             existing_problems[item.titleSlug] = problem
-        elif question_id is not None and problem.frontend_question_id is None:
-            problem.frontend_question_id = question_id
+        # Note: frontend_question_id is intentionally left None
+        # as item.id from recentAcSubmissionList is a submission ID, not the question number
 
         # Now link user_problem
         solved_datetime = None

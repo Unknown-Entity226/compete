@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from collections import OrderedDict
 from typing import Any, Callable, Coroutine, Dict, Optional, Tuple, TypeVar
 import redis.asyncio as aioredis
 
@@ -11,6 +12,8 @@ from app.services.single_flight import SingleFlight
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+MAX_FALLBACK_ENTRIES = 10_000
 
 
 class CacheService:
@@ -28,12 +31,18 @@ class CacheService:
         self._redis: Optional[aioredis.Redis] = None
         self._single_flight = SingleFlight()
         # In-memory fallback storage: key -> (value_str, expire_timestamp)
-        self._fallback_store: Dict[str, Tuple[str, float]] = {}
+        self._fallback_store: OrderedDict[str, Tuple[str, float]] = OrderedDict()
         self._is_redis_available = True
+        self._last_redis_failure: float = 0.0
+        self._redis_retry_interval: float = 30.0
 
     async def _get_redis(self) -> Optional[aioredis.Redis]:
         """Obtain or lazily initialize the Redis client pool."""
-        if self._redis is None and self._is_redis_available:
+        if self._redis is None:
+            # Only retry after the cooldown has elapsed (or on first attempt)
+            if time.time() - self._last_redis_failure <= self._redis_retry_interval:
+                return None
+
             urls_to_try = [self.redis_url]
             import os
             if self.allow_unix_socket and os.path.exists("/tmp/redis.sock"):
@@ -50,6 +59,7 @@ class CacheService:
                     )
                     await client.ping()
                     self._redis = client
+                    self._last_redis_failure = 0.0
                     logger.info("Connected to Redis at %s", url)
                     connected = True
                     break
@@ -61,7 +71,7 @@ class CacheService:
                     "Unable to connect to Redis at %s. Using in-memory fallback cache.",
                     self.redis_url,
                 )
-                self._is_redis_available = False
+                self._last_redis_failure = time.time()
                 self._redis = None
         return self._redis
 
@@ -73,12 +83,14 @@ class CacheService:
                 return await redis_client.get(key)
             except Exception as e:
                 logger.warning("Redis GET failed for key '%s': %s. Falling back to memory.", key, e)
-                self._is_redis_available = False
+                self._last_redis_failure = time.time()
+                self._redis = None  # Force re-connection attempt on next eligible call
 
         # In-memory fallback
         if key in self._fallback_store:
             val, expire_at = self._fallback_store[key]
             if time.time() < expire_at:
+                self._fallback_store.move_to_end(key)
                 return val
             # Expired
             self._fallback_store.pop(key, None)
@@ -93,11 +105,30 @@ class CacheService:
                 return True
             except Exception as e:
                 logger.warning("Redis SET failed for key '%s': %s. Falling back to memory.", key, e)
-                self._is_redis_available = False
+                self._last_redis_failure = time.time()
+                self._redis = None  # Force re-connection attempt on next eligible call
 
         # In-memory fallback
+        if ttl_seconds <= 0:
+            # A non-positive TTL means immediately expired; don't store it
+            self._fallback_store.pop(key, None)
+            return True
+
         expire_at = time.time() + ttl_seconds
         self._fallback_store[key] = (value, expire_at)
+        self._fallback_store.move_to_end(key)
+
+        # Opportunistically purge expired entries when approaching capacity
+        if len(self._fallback_store) > 0.8 * MAX_FALLBACK_ENTRIES:
+            now = time.time()
+            expired_keys = [k for k, (_, exp) in self._fallback_store.items() if exp < now]
+            for k in expired_keys:
+                del self._fallback_store[k]
+
+        # Hard cap: evict oldest entries if still over limit
+        while len(self._fallback_store) > MAX_FALLBACK_ENTRIES:
+            self._fallback_store.popitem(last=False)
+
         return True
 
     async def get_json(self, key: str) -> Optional[Any]:
