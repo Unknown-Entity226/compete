@@ -37,6 +37,15 @@ export default function LoggedOutHero({ onOpenLogin }) {
           </p>
         </div>
 
+        <button
+          type="button"
+          onClick={onOpenLogin}
+          className="group inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 px-7 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-600/25 transition-all hover:from-purple-500 hover:to-indigo-500 hover:shadow-purple-600/40 hover:scale-[1.02] active:scale-[0.98]"
+        >
+          <Sparkles className="h-4 w-4 text-purple-200" />
+          <span>Connect Profile & Log In</span>
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        </button>
       </div>
 
       {/* Scroll Down Indicator */}

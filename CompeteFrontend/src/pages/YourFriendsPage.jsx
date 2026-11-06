@@ -72,6 +72,11 @@ export default function YourFriendsPage() {
                         <span className="text-xs text-purple-400 font-mono">
                           @{friend.username}
                         </span>
+                        {friend.isMockData && (
+                          <span className="mt-1 inline-block text-[10px] font-medium text-amber-300">
+                            Sample profile
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -79,6 +84,7 @@ export default function YourFriendsPage() {
                       type="button"
                       onClick={() => removeFriend(friend.username)}
                       title="Remove Friend"
+                      aria-label={`Remove ${friend.username} from friends`}
                       className="text-gray-500 hover:text-red-400 p-1 rounded hover:bg-red-950/20 transition-colors"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -93,7 +99,7 @@ export default function YourFriendsPage() {
                         <span>Rating</span>
                       </div>
                       <div className="font-heading text-base font-bold text-amber-300">
-                        {friend.contestRating || '—'}
+                        {friend.contestRating ?? '—'}
                       </div>
                     </div>
 

@@ -2,15 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 
 const AuthContext = createContext(null)
 
-const DEFAULT_FRIENDS = [
-  {
-    username: 'binary_ninja',
-    realName: 'Binary Ninja',
-    contestRating: 1720,
-    problemStats: { total: 415, easy: 190, medium: 200, hard: 25 },
-    strongestArea: 'Trees',
-  },
-]
+const DEFAULT_FRIENDS = []
 
 function readStoredValue(key, fallback) {
   try {
@@ -23,12 +15,46 @@ function readStoredValue(key, fallback) {
 
 function readStoredUser() {
   const user = readStoredValue('compete_user', null)
-  return user && typeof user.username === 'string' && user.username.trim() ? user : null
+  return normalizeUser(user)
 }
 
 function normalizeFriends(value) {
   if (!Array.isArray(value)) return DEFAULT_FRIENDS
-  return value.filter((friend) => friend && typeof friend.username === 'string' && friend.username.trim())
+  const friendsByUsername = new Map()
+  value.forEach((friend) => {
+    const normalized = normalizeUser(friend)
+    if (normalized) friendsByUsername.set(normalized.username.toLowerCase(), normalized)
+  })
+  return [...friendsByUsername.values()]
+}
+
+function normalizeUser(user) {
+  if (!user || typeof user.username !== 'string' || !user.username.trim()) return null
+  const toNumber = (value, fallback = 0) => {
+    const number = Number(value)
+    return Number.isFinite(number) ? number : fallback
+  }
+  const problemStats = user.problemStats || {}
+  const easy = toNumber(problemStats.easy)
+  const medium = toNumber(problemStats.medium)
+  const hard = toNumber(problemStats.hard)
+  const rating = user.contestRating == null ? null : toNumber(user.contestRating, null)
+  const ranking = user.globalRanking == null ? null : toNumber(user.globalRanking, null)
+
+  return {
+    ...user,
+    username: user.username.trim(),
+    realName: typeof user.realName === 'string' ? user.realName : null,
+    contestRating: rating,
+    globalRanking: ranking,
+    problemStats: {
+      total: toNumber(problemStats.total, easy + medium + hard),
+      easy,
+      medium,
+      hard,
+    },
+    topicStats: Array.isArray(user.topicStats) ? user.topicStats : [],
+  }
 }
 
 function writeStoredValue(key, value) {
@@ -56,9 +82,10 @@ export function AuthProvider({ children }) {
   }, [friends])
 
   const login = (userData) => {
-    if (!userData || typeof userData.username !== 'string' || !userData.username.trim()) return
-    writeStoredValue('compete_user', userData)
-    setCurrentUser(userData)
+    const normalizedUser = normalizeUser(userData)
+    if (!normalizedUser) return
+    writeStoredValue('compete_user', normalizedUser)
+    setCurrentUser(normalizedUser)
   }
 
   const logout = () => {

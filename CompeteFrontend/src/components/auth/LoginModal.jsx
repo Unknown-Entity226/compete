@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { X, Sparkles, AlertCircle, Loader2, Link2, User } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { comparisonService } from '../../services/comparisonService'
@@ -6,9 +7,10 @@ import { comparisonService } from '../../services/comparisonService'
 function extractLeetCodeUsername(input) {
   if (!input) return ''
   const trimmed = input.trim()
-  if (/^(https?:\/\/|www\.)/i.test(trimmed)) {
+  if (/^(https?:\/\/|www\.|leetcode\.com\/)/i.test(trimmed)) {
     try {
-      const url = new URL(trimmed.startsWith('www.') ? `https://${trimmed}` : trimmed)
+      const normalizedUrl = /^(www\.|leetcode\.com\/)/i.test(trimmed) ? `https://${trimmed}` : trimmed
+      const url = new URL(normalizedUrl)
       if (!['leetcode.com', 'www.leetcode.com'].includes(url.hostname.toLowerCase())) return ''
       const segments = url.pathname.split('/').filter(Boolean)
       if (segments[0] === 'u' && segments[1]) return segments[1]
@@ -22,6 +24,8 @@ function extractLeetCodeUsername(input) {
 
 export default function LoginModal({ isOpen, onClose }) {
   const { login } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [displayName, setDisplayName] = useState('')
   const [profileInput, setProfileInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -42,7 +46,25 @@ export default function LoginModal({ isOpen, onClose }) {
     closeButtonRef.current?.focus()
 
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusableElements = dialogRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )
+      if (!focusableElements?.length) return
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault()
+        lastElement.focus()
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault()
+        firstElement.focus()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
 
@@ -74,13 +96,21 @@ export default function LoginModal({ isOpen, onClose }) {
         username: profile.username || username,
         realName: displayName.trim() || profile.realName || username,
         avatarUrl: profile.avatarUrl || null,
-        contestRating: profile.contestRating || null,
-        globalRanking: profile.globalRanking || null,
+        contestRating: profile.contestRating ?? null,
+        globalRanking: profile.globalRanking ?? null,
         problemStats: profile.problemStats || { total: 0, easy: 0, medium: 0, hard: 0 },
         strongestArea: profile.strongestArea || null,
         topicStats: profile.topicStats || [],
         lastUpdated: profile.lastUpdated || null,
+        isMockData: Boolean(profile.isMockData),
       })
+      const destination = location.state?.from
+      if (destination?.pathname) {
+        navigate(`${destination.pathname}${destination.search || ''}${destination.hash || ''}`, {
+          replace: true,
+          state: null,
+        })
+      }
       onClose()
     } catch (err) {
       if (requestId !== requestIdRef.current) return

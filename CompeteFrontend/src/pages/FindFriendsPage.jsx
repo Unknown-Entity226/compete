@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Search, UserPlus, Swords, Check, Loader2, AlertCircle, Code, Trophy, Award } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { comparisonService } from '../services/comparisonService'
@@ -11,27 +11,39 @@ export default function FindFriendsPage() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [duelTarget, setDuelTarget] = useState(null)
+  const searchRequestId = useRef(0)
+
+  useEffect(() => () => {
+    searchRequestId.current += 1
+  }, [])
 
   const handleSearch = async (e) => {
     e?.preventDefault()
+    if (loading) return
     const trimmed = query.trim().replace(/^@/, '')
-    if (!trimmed) return
+    if (!trimmed) {
+      setResult(null)
+      setError('Enter a LeetCode username to search.')
+      return
+    }
 
+    const requestId = ++searchRequestId.current
     setLoading(true)
     setError('')
     setResult(null)
 
     try {
       const profile = await comparisonService.getUserProfile(trimmed)
-      setResult(profile)
+      if (requestId === searchRequestId.current) setResult(profile)
     } catch (err) {
+      if (requestId !== searchRequestId.current) return
       if (err.status === 404) {
         setError(`LeetCode user "${trimmed}" does not exist.`)
       } else {
         setError(err.message || 'Error searching user.')
       }
     } finally {
-      setLoading(false)
+      if (requestId === searchRequestId.current) setLoading(false)
     }
   }
 
@@ -56,8 +68,11 @@ export default function FindFriendsPage() {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
             type="text"
+            aria-label="LeetCode username"
+            required
             placeholder="Enter LeetCode username (e.g. binary_ninja, tourist, neetcode)..."
             value={query}
+            disabled={loading}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full rounded-xl border border-[#2a2d35] bg-[#16181c] pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 transition-colors"
           />
@@ -91,7 +106,7 @@ export default function FindFriendsPage() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-8 flex items-center gap-2.5 rounded-xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">
+        <div role="alert" className="mb-8 flex items-center gap-2.5 rounded-xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">
           <AlertCircle className="h-5 w-5 shrink-0 text-red-400" />
           <span>{error}</span>
         </div>
@@ -150,6 +165,12 @@ export default function FindFriendsPage() {
             </div>
           </div>
 
+          {result.isMockData && (
+            <p role="status" className="text-xs text-amber-300">
+              Showing sample profile data. Live profile data is unavailable right now.
+            </p>
+          )}
+
           {/* Stat Numbers */}
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl bg-[#101115] p-3 text-center">
@@ -168,7 +189,7 @@ export default function FindFriendsPage() {
                 <span>Rating</span>
               </div>
               <div className="font-heading text-xl font-bold text-amber-300">
-                {result.contestRating || '—'}
+                {result.contestRating ?? '—'}
               </div>
             </div>
 
@@ -178,7 +199,7 @@ export default function FindFriendsPage() {
                 <span>Rank</span>
               </div>
               <div className="font-heading text-lg font-bold text-cyan-300">
-                {result.globalRanking ? `#${result.globalRanking.toLocaleString()}` : '—'}
+                {result.globalRanking != null ? `#${result.globalRanking.toLocaleString()}` : '—'}
               </div>
             </div>
           </div>

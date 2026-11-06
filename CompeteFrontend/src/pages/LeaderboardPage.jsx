@@ -13,18 +13,20 @@ export default function LeaderboardPage() {
       username: currentUser?.username || 'You',
       realName: currentUser?.realName || 'You',
       contestRating: Number.isFinite(currentUser?.contestRating) ? currentUser.contestRating : null,
-      globalRanking: currentUser?.globalRanking || null,
+      globalRanking: currentUser?.globalRanking ?? null,
       problemStats: currentUser?.problemStats || { total: 0, easy: 0, medium: 0, hard: 0 },
       strongestArea: currentUser?.strongestArea || null,
+      isMockData: Boolean(currentUser?.isMockData),
       isCurrentUser: true,
     },
     ...friends.map((f) => ({
       username: f.username,
       realName: f.realName || f.username,
       contestRating: Number.isFinite(f.contestRating) ? f.contestRating : null,
-      globalRanking: f.globalRanking || null,
+      globalRanking: f.globalRanking ?? null,
       problemStats: f.problemStats || { total: 0, easy: 0, medium: 0, hard: 0 },
       strongestArea: f.strongestArea || null,
+      isMockData: Boolean(f.isMockData),
       isCurrentUser: false,
     })),
   ]
@@ -112,6 +114,11 @@ export default function LeaderboardPage() {
                           YOU
                         </span>
                       )}
+                      {player.isMockData && (
+                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300 border border-amber-500/30">
+                          SAMPLE
+                        </span>
+                      )}
                     </div>
                     <span className="text-[11px] text-gray-500 font-mono block truncate">
                       @{player.username}
@@ -139,7 +146,7 @@ export default function LeaderboardPage() {
                 {/* Global Rank */}
                 <div className="col-span-2 text-center hidden sm:block">
                   <span className="text-xs text-gray-400 font-mono">
-                    {player.globalRanking ? `#${player.globalRanking.toLocaleString()}` : '—'}
+                    {player.globalRanking != null ? `#${player.globalRanking.toLocaleString()}` : '—'}
                   </span>
                 </div>
 

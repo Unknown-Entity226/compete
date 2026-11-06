@@ -8,6 +8,9 @@ export default function UserStatsCard({ user }) {
   const easyPct = total > 0 ? (stats.easy / total) * 100 : 0
   const medPct = total > 0 ? (stats.medium / total) * 100 : 0
   const hardPct = total > 0 ? (stats.hard / total) * 100 : 0
+  const lastUpdatedDate = user.lastUpdated && Number.isFinite(Date.parse(user.lastUpdated))
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(user.lastUpdated))
+    : null
 
   return (
     <div className="rounded-2xl border border-[#2a2d35] bg-[#16181c] p-6 shadow-xl flex flex-col justify-between">
@@ -53,7 +56,7 @@ export default function UserStatsCard({ user }) {
               <span>Contest</span>
             </div>
             <div className="font-heading text-2xl font-black text-amber-300">
-              {user.contestRating || '—'}
+              {user.contestRating ?? '—'}
             </div>
           </div>
 
@@ -63,7 +66,7 @@ export default function UserStatsCard({ user }) {
               <span>Rank</span>
             </div>
             <div className="font-heading text-xl sm:text-2xl font-black text-cyan-300">
-              {user.globalRanking ? `#${user.globalRanking.toLocaleString()}` : '—'}
+              {user.globalRanking != null ? `#${user.globalRanking.toLocaleString()}` : '—'}
             </div>
           </div>
         </div>
@@ -118,9 +121,9 @@ export default function UserStatsCard({ user }) {
         </div>
       </div>
 
-      <div className="mt-5 pt-3 border-t border-[#2a2d35]/40 flex justify-between items-center text-[11px] text-gray-500">
-        <span>Source: LeetCode Public GraphQL</span>
-        <span className="text-emerald-400/90 font-medium">● Verified Sync</span>
+      <div className="mt-5 pt-3 border-t border-[#2a2d35]/40 flex flex-col gap-1 text-[11px] text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+        <span>{user.isMockData ? 'Sample profile data' : 'LeetCode profile data'}</span>
+        <span>{lastUpdatedDate ? `Fetched ${lastUpdatedDate}` : 'Loaded on sign in'}</span>
       </div>
     </div>
   )

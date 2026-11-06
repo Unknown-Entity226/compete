@@ -19,9 +19,10 @@ export default function Navbar({ onOpenProfile }) {
         <div className="flex items-center gap-8">
           <Link
             to="/"
+            aria-label="Compete home"
             className="flex items-center gap-2 font-heading text-2xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-fuchsia-400 to-indigo-400 hover:opacity-90 transition-opacity"
           >
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-900/40 text-base">
+            <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-900/40 text-base">
               ⚡
             </span>
             <span>Compete</span>
@@ -29,7 +30,7 @@ export default function Navbar({ onOpenProfile }) {
 
           {/* Logged-In Navigation Sections */}
           {isLoggedIn && (
-            <nav className="hidden md:flex items-center gap-1">
+            <nav aria-label="Main navigation" className="hidden md:flex items-center gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon
                 const isActive = location.pathname === item.path
@@ -37,6 +38,7 @@ export default function Navbar({ onOpenProfile }) {
                   <Link
                     key={item.path}
                     to={item.path}
+                    aria-current={isActive ? 'page' : undefined}
                     className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
                       isActive
                         ? 'bg-purple-900/30 text-purple-300 border border-purple-500/30'
@@ -58,6 +60,7 @@ export default function Navbar({ onOpenProfile }) {
             <div className="flex items-center gap-3">
               <Link
                 to="/"
+                aria-label={`Home profile for ${currentUser?.realName || currentUser?.username || 'user'}`}
                 className="flex items-center gap-2.5 rounded-full border border-[#2a2d35] bg-[#16181c] py-1.5 pl-3 pr-4 text-sm font-medium text-gray-200 hover:border-purple-500/40 transition-colors"
               >
                 <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-tr from-purple-600 to-pink-500 text-xs font-bold text-white uppercase">
@@ -66,7 +69,7 @@ export default function Navbar({ onOpenProfile }) {
                 <span className="text-gray-300 max-w-[120px] truncate">
                   {currentUser?.realName || currentUser?.username}
                 </span>
-                {currentUser?.contestRating && (
+                {currentUser?.contestRating != null && (
                   <span className="rounded bg-purple-950/80 px-1.5 py-0.5 text-[10px] font-semibold text-purple-300 border border-purple-700/40">
                     {currentUser.contestRating}
                   </span>
@@ -77,6 +80,7 @@ export default function Navbar({ onOpenProfile }) {
                 type="button"
                 onClick={logout}
                 title="Log out"
+                aria-label="Log out"
                 className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#2a2d35] bg-[#16181c] text-gray-400 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400 transition-colors"
               >
                 <LogOut className="h-4 w-4" />
@@ -87,6 +91,7 @@ export default function Navbar({ onOpenProfile }) {
               type="button"
               onClick={onOpenProfile}
               title="Profile / Log In"
+              aria-label="Open profile setup"
               className="group flex h-10 w-10 items-center justify-center rounded-xl border border-[#2a2d35] bg-[#16181c] text-gray-300 hover:border-purple-500 hover:bg-purple-950/20 hover:text-purple-300 transition-all shadow-sm"
             >
               <User className="h-5 w-5 transition-transform group-hover:scale-110" />
@@ -97,7 +102,7 @@ export default function Navbar({ onOpenProfile }) {
 
       {/* Mobile Nav Bar when Logged In */}
       {isLoggedIn && (
-        <div className="flex md:hidden border-t border-[#2a2d35] bg-[#121316] px-4 py-2 justify-around">
+        <nav aria-label="Mobile navigation" className="flex md:hidden border-t border-[#2a2d35] bg-[#121316] px-4 py-2 justify-around">
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.path
@@ -105,6 +110,7 @@ export default function Navbar({ onOpenProfile }) {
               <Link
                 key={item.path}
                 to={item.path}
+                aria-current={isActive ? 'page' : undefined}
                 className={`flex flex-col items-center gap-1 text-[11px] font-medium py-1 px-2 rounded ${
                   isActive ? 'text-purple-400' : 'text-gray-400'
                 }`}
@@ -114,7 +120,7 @@ export default function Navbar({ onOpenProfile }) {
               </Link>
             )
           })}
-        </div>
+        </nav>
       )}
     </header>
   )

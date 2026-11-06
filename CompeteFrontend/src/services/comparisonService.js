@@ -4,6 +4,7 @@ import mockState from '../mockData/competestate.json'
 const mockUsers = mockState.competitionData.users
 
 function findMockUser(username) {
+  if (typeof username !== 'string') return undefined
   return mockUsers.find((user) => user.leetcodeId.toLowerCase() === username.toLowerCase())
 }
 
@@ -26,6 +27,7 @@ function createMockComparison(firstUser, secondUser) {
       : secondUser.leetcodeId
 
   return {
+    isMockData: true,
     comparisonId: `${firstUser.leetcodeId}-vs-${secondUser.leetcodeId}`,
     lastUpdated: mockState.competitionData.lastUpdated,
     winner,
@@ -71,7 +73,8 @@ export const comparisonService = {
           problemStats: mockUser.problemStats,
           strongestArea: mockUser.strongestArea,
           topicStats: mockUser.topicStats,
-          globalRanking: 15420,
+          lastUpdated: mockState.competitionData.lastUpdated,
+          isMockData: true,
         }
       }
       throw err

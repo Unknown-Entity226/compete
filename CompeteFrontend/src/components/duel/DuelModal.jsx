@@ -3,17 +3,25 @@ import { X, Trophy, Swords, Loader2 } from 'lucide-react'
 import { comparisonService } from '../../services/comparisonService'
 
 export default function DuelModal({ isOpen, onClose, user1, user2 }) {
+  if (!isOpen || !user1 || !user2) return null
+  return (
+    <DuelDialog
+      key={JSON.stringify([user1, user2])}
+      onClose={onClose}
+      user1={user1}
+      user2={user2}
+    />
+  )
+}
+
+function DuelDialog({ onClose, user1, user2 }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const dialogRef = useRef(null)
   const closeButtonRef = useRef(null)
 
   useEffect(() => {
-    setData(null)
-    setError(null)
-    setLoading(true)
-    if (!isOpen || !user1 || !user2) return undefined
-
     let isCancelled = false
     const previousOverflow = document.body.style.overflow
     const previousFocus = document.activeElement
@@ -21,7 +29,25 @@ export default function DuelModal({ isOpen, onClose, user1, user2 }) {
     closeButtonRef.current?.focus()
 
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusableElements = dialogRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )
+      if (!focusableElements?.length) return
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault()
+        lastElement.focus()
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault()
+        firstElement.focus()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
 
@@ -48,9 +74,7 @@ export default function DuelModal({ isOpen, onClose, user1, user2 }) {
       document.removeEventListener('keydown', handleKeyDown)
       previousFocus?.focus?.()
     }
-  }, [isOpen, user1, user2, onClose])
-
-  if (!isOpen) return null
+  }, [user1, user2, onClose])
 
   const winner = data?.winner
   const scores = data?.score || {}
@@ -76,6 +100,7 @@ export default function DuelModal({ isOpen, onClose, user1, user2 }) {
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="duel-dialog-title"
@@ -106,7 +131,7 @@ export default function DuelModal({ isOpen, onClose, user1, user2 }) {
         {loading ? (
           <div role="status" className="flex flex-col items-center justify-center py-16 gap-3">
             <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-            <p className="text-sm text-gray-400">Fetching live LeetCode stats & calculating duel scores...</p>
+            <p className="text-sm text-gray-400">Fetching LeetCode stats and calculating duel scores…</p>
           </div>
         ) : error ? (
           <div role="alert" className="rounded-xl border border-red-900/50 bg-red-950/30 p-4 text-center text-sm text-red-300">
@@ -123,7 +148,9 @@ export default function DuelModal({ isOpen, onClose, user1, user2 }) {
                 </span>
               </div>
               <p className="text-xs text-gray-400">
-                Determined by contest rating, difficulty-weighted problems, velocity, and solving streaks.
+                {data?.isMockData
+                  ? 'Sample profile data is being used; recent activity and streak data are unavailable.'
+                  : 'Determined by contest rating, difficulty-weighted problems, velocity, and solving streaks.'}
               </p>
             </div>
 

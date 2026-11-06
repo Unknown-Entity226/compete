@@ -1,18 +1,29 @@
-# React + Vite
+# Compete Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Compete is a React single-page app for viewing LeetCode profile stats, managing a friends list, and comparing profiles head-to-head.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Requirements: Node.js and npm.
 
-## React Compiler
+```bash
+npm install
+npm run dev
+```
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+The Vite development server runs on `http://localhost:5173` and proxies `/api` requests to the FastAPI service at `http://localhost:8000`. Start the backend using the instructions in the repository root README.
 
-Note: This will impact Vite dev & build performances.
+To point the frontend at a different API server, create a `.env.local` file with:
 
-## Expanding the ESLint configuration
+```dotenv
+VITE_API_URL=https://your-api-host
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Build and lint
+
+```bash
+npm run build
+npm run lint
+```
+
+The app includes sample profile data for the two preconfigured demo accounts when the profile service is unavailable. Other profile lookups and comparisons show the API error instead of substituting unrelated users.

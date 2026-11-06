@@ -9,7 +9,7 @@ const steps = [
   },
   {
     step: '02',
-    title: http://localhost:5173/'Enter your details',
+    title: 'Enter your details',
     desc: 'Add your display name so friends can recognize you on the leaderboard.',
     icon: FileText,
   },

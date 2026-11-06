@@ -15,6 +15,7 @@ export default function FriendsRankingStrip({ onCompare }) {
       realName: currentUser?.realName || 'You',
       contestRating: myRating,
       totalSolved: myTotal,
+      isMockData: Boolean(currentUser?.isMockData),
       isCurrentUser: true,
     },
     ...friends.map((f) => ({
@@ -22,6 +23,7 @@ export default function FriendsRankingStrip({ onCompare }) {
       realName: f.realName || f.username,
       contestRating: Number.isFinite(f.contestRating) ? f.contestRating : null,
       totalSolved: f.problemStats?.total || 0,
+      isMockData: Boolean(f.isMockData),
       isCurrentUser: false,
     })),
   ]
@@ -122,6 +124,9 @@ export default function FriendsRankingStrip({ onCompare }) {
                   <span className="text-[11px] text-gray-500 font-mono">
                     @{participant.username}
                   </span>
+                  {participant.isMockData && (
+                    <span className="block text-[10px] text-amber-300">Sample profile</span>
+                  )}
                 </div>
               </div>
 
