@@ -11,7 +11,11 @@ npm install
 npm run dev
 ```
 
-The Vite development server runs on `http://localhost:5173` and proxies `/api` requests to the FastAPI service at `http://localhost:8000`. Start the backend using the instructions in the repository root README.
+The Vite development server runs on `http://localhost:5173` and proxies `/api` requests to the FastAPI service at `http://127.0.0.1:8000`. Start the backend using the instructions in the repository root README. If the backend uses a different address or port, set `VITE_API_PROXY_TARGET` in `.env.local`, for example:
+
+```dotenv
+VITE_API_PROXY_TARGET=http://127.0.0.1:8010
+```
 
 To point the frontend at a different API server, create a `.env.local` file with:
 
