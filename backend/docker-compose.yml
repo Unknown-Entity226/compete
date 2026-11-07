@@ -13,7 +13,7 @@ services:
       - PROJECT_NAME=CompeteFastAPI
       - APP_VERSION=0.1.0
       - API_PREFIX=/api
-      - DATABASE_URL=postgresql+asyncpg://compete_user:compete_password@postgres:5432/compete_database
+      - DATABASE_URL=postgresql+asyncpg://aarav:aarav123@postgres:5432/compete_database
       - REDIS_URL=redis://redis:6379/0
       - DEFAULT_RATE_LIMIT=60/minute
       - RATE_LIMIT_COMPARE=30/minute
@@ -33,15 +33,15 @@ services:
     container_name: compete_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: compete_user
-      POSTGRES_PASSWORD: compete_password
+      POSTGRES_USER: aarav
+      POSTGRES_PASSWORD: aarav123
       POSTGRES_DB: compete_database
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U compete_user -d compete_database"]
+      test: ["CMD-SHELL", "pg_isready -U aarav -d compete_database"]
       interval: 5s
       timeout: 5s
       retries: 5

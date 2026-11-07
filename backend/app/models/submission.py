@@ -5,8 +5,15 @@ import uuid
 from sqlalchemy import String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from __future__ import annotations
 from app.models.base import Base
+
+try:
+    from app.models.user import User
+    from app.models.problem import Problem
+except ImportError:
+    User = None
+    Problem = None
 
 
 class Submission(Base):
