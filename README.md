@@ -15,13 +15,16 @@ flowchart TD
     LeetCode["LeetCode GraphQL API"]
 
     Client -->|REST Requests| FastAPI
-    FastAPI -->|Query Cache / Lock| Redis
+    FastAPI -->|Cache / Distributed Lock| Redis
+    FastAPI -->|Cache fallback and write-through| PostgreSQL
     FastAPI -->|Persist Users / Submissions / Snapshots| PostgreSQL
     FastAPI -->|Upstream Fetch with SingleFlight| LeetCode
 ```
 
 ### Core Subsystems:
-* **`CompeteFastAPI/`**: Python 3.12+ FastAPI backend implementing async SQLAlchemy 2.0, Redis caching with in-memory LRU fallback, SingleFlight request deduplication, distributed APScheduler background sync, and SlowAPI rate limiting.
+* **`CompeteFastAPI/`**: Python 3.12+ FastAPI backend implementing async SQLAlchemy 2.0, Redis caching with persistent PostgreSQL and bounded in-memory fallbacks, SingleFlight request deduplication, distributed APScheduler background sync, and SlowAPI rate limiting.
+
+Cache writes are persisted to PostgreSQL with the same TTL as Redis. On a Redis miss or connection failure, the backend checks PostgreSQL and warms Redis again when it is reachable; bounded process memory remains the final fallback if the database is unavailable.
 * **`CompeteFrontend/`**: React + Vite single-page application for rendering duel comparisons, stats breakdown, and progress charts.
 
 ---

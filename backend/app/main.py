@@ -33,7 +33,7 @@ from app.core.exceptions import (
 )
 from app.api.deps import get_cache_service, set_leetcode_http_client
 from app.api.router import api_router
-from app.db.session import async_session_factory
+from app.db.session import async_session_factory, engine
 from app.db.init_db import init_db
 from app.workers.scheduler import (
     start_scheduler,
@@ -65,13 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cache = get_cache_service()
 
     try:
-        # Initialize database schema (create tables if they don't exist)
+        # Optionally run migrations during startup for single-instance deployments.
         if settings.INIT_DB_ON_STARTUP:
-            try:
-                await init_db()
-                logger.info("Database schema initialized.")
-            except Exception as exc:
-                logger.warning("Database schema initialization skipped: %s", exc)
+            await init_db()
 
         cache_info = await cache.health_check()
         logger.info("Cache service ready (%s on %s)", cache_info["status"], cache_info["backend"])
@@ -91,7 +87,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await cache.close()
             finally:
                 set_leetcode_http_client(None)
-                await upstream_http_client.aclose()
+                try:
+                    await upstream_http_client.aclose()
+                finally:
+                    await engine.dispose()
 
 
 app = FastAPI(

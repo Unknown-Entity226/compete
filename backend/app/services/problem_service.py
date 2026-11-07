@@ -88,10 +88,16 @@ async def record_user_problems(
         )
         existing_problems = {p.title_slug: p for p in existing_problems_res.scalars().all()}
 
-    # Pre-fetch existing user_problems for this user
+    # Load associations only for the problems in this batch; users can have
+    # thousands of catalog entries, while each upstream response is capped.
+    problem_ids = list({problem.id for problem in existing_problems.values()})
+    if not problem_ids:
+        return 0
     existing_up_res = await session.execute(
-        select(UserProblem)
-        .where(UserProblem.user_id == user.id)
+        select(UserProblem).where(
+            UserProblem.user_id == user.id,
+            UserProblem.problem_id.in_(problem_ids),
+        )
     )
     existing_user_problems = {up.problem_id: up for up in existing_up_res.scalars().all()}
 
@@ -177,4 +183,3 @@ async def get_user_problems_from_db(
         .limit(limit)
     )
     return list(result.scalars().all())
-

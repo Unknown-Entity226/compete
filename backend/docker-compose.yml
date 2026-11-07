@@ -10,16 +10,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - PROJECT_NAME=CompeteFastAPI
-      - APP_VERSION=0.1.0
-      - API_PREFIX=/api
-      - DATABASE_URL=postgresql+asyncpg://aarav:aarav123@postgres:5432/compete_database
-      - REDIS_URL=redis://redis:6379/0
-      - DEFAULT_RATE_LIMIT=60/minute
-      - RATE_LIMIT_COMPARE=30/minute
-      - SNAPSHOT_MIN_INTERVAL_SECONDS=300
-      - SNAPSHOT_SYNC_INTERVAL_HOURS=1
-      - ENABLE_BACKGROUND_SCHEDULER=true
+      PROJECT_NAME: CompeteFastAPI
+      APP_VERSION: 0.1.0
+      API_PREFIX: /api
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-compete_user}:${POSTGRES_PASSWORD:-compete_password}@postgres:5432/${POSTGRES_DB:-compete_db}
+      REDIS_URL: redis://redis:6379/0
+      DEFAULT_RATE_LIMIT: 60/minute
+      RATE_LIMIT_COMPARE: 30/minute
+      SNAPSHOT_SYNC_INTERVAL_HOURS: 1
+      ENABLE_BACKGROUND_SCHEDULER: "true"
+      INIT_DB_ON_STARTUP: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,15 +33,15 @@ services:
     container_name: compete_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: aarav
-      POSTGRES_PASSWORD: aarav123
-      POSTGRES_DB: compete_database
+      POSTGRES_USER: ${POSTGRES_USER:-compete_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-compete_password}
+      POSTGRES_DB: ${POSTGRES_DB:-compete_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aarav -d compete_database"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-compete_user} -d ${POSTGRES_DB:-compete_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -73,4 +73,3 @@ volumes:
 networks:
   compete_network:
     driver: bridge
-

@@ -5,6 +5,7 @@ from app.models.problem import Problem
 from app.models.user_problem import UserProblem
 from app.models.statistic import Statistic
 from app.models.submission import Submission
+from app.models.cache_entry import CacheEntry
 
 __all__ = [
     "Base",
@@ -14,5 +15,5 @@ __all__ = [
     "UserProblem",
     "Statistic",
     "Submission",
+    "CacheEntry",
 ]
-

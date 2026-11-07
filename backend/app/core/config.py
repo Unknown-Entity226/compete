@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: float = 30.0
-    INIT_DB_ON_STARTUP: bool = True
+    INIT_DB_ON_STARTUP: bool = False
 
     # Persistence: snapshot minimum interval to avoid flooding the statistics table
     SNAPSHOT_MIN_INTERVAL_SECONDS: int = 86400    # At most one unchanged snapshot per day
@@ -57,9 +57,13 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="after")
     @classmethod
     def assemble_async_db_url(cls, v: str) -> str:
-        """Ensure standard postgresql:// connection strings use the asyncpg driver."""
+        """Ensure database URLs use drivers supported by the async engine."""
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
         if v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if v.startswith("sqlite://"):
+            return v.replace("sqlite://", "sqlite+aiosqlite://", 1)
         return v
 
     @field_validator("BACKEND_CORS_ORIGINS")
@@ -73,7 +77,7 @@ class Settings(BaseSettings):
     @field_validator("SNAPSHOT_RETENTION_DAYS")
     @classmethod
     def validate_snapshot_retention(cls, days: int) -> int:
-        if days < 31:
+        if days < 30:
             raise ValueError("SNAPSHOT_RETENTION_DAYS must preserve at least 30 days of velocity history")
         return days
 
@@ -86,4 +90,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

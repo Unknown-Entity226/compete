@@ -226,12 +226,29 @@ class LeetCodeClient:
                             "LeetCode returned a non-JSON response"
                         ) from exc
 
-                    # Handle GraphQL top-level errors if any
-                    if "errors" in data and not data.get("data"):
-                        error_msg = "; ".join(e.get("message", "Unknown error") for e in data["errors"])
+                    if not isinstance(data, dict):
+                        raise UpstreamServiceError(
+                            "LeetCode returned an invalid GraphQL response"
+                        )
+
+                    # Do not treat partial GraphQL responses as complete profile
+                    # or activity data; doing so can turn upstream faults into
+                    # misleading empty results.
+                    if data.get("errors"):
+                        error_msg = "; ".join(
+                            error.get("message", "Unknown error")
+                            if isinstance(error, dict)
+                            else str(error)
+                            for error in data["errors"]
+                        )
                         raise UpstreamServiceError(f"GraphQL Error: {error_msg}")
 
-                    return data.get("data", {})
+                    result = data.get("data")
+                    if not isinstance(result, dict):
+                        raise UpstreamServiceError(
+                            "LeetCode returned an empty or invalid GraphQL data payload"
+                        )
+                    return result
 
                 except httpx.HTTPStatusError as exc:
                     status_code = exc.response.status_code
@@ -353,14 +370,28 @@ class LeetCodeClient:
         submissions: List[SubmissionItem] = []
         for item in submissions_raw:
             try:
+                submission_id = item.get("id")
+                title_slug = item.get("titleSlug")
+                timestamp = item.get("timestamp")
+                if (
+                    submission_id is None
+                    or not str(submission_id).strip()
+                    or not item.get("title")
+                    or not title_slug
+                    or not item.get("statusDisplay")
+                    or not item.get("lang")
+                    or timestamp is None
+                ):
+                    logger.debug("Skipping incomplete submission item: %s", item)
+                    continue
                 submissions.append(
                     SubmissionItem(
-                        id=str(item.get("id")),
-                        title=item.get("title", ""),
-                        titleSlug=item.get("titleSlug", ""),
-                        status=item.get("statusDisplay", "Unknown"),
-                        lang=item.get("lang", "unknown"),
-                        timestamp=int(item.get("timestamp", 0)),
+                        id=str(submission_id),
+                        title=item["title"],
+                        titleSlug=title_slug,
+                        status=item["statusDisplay"],
+                        lang=item["lang"],
+                        timestamp=int(timestamp),
                     )
                 )
             except Exception as e:
@@ -395,18 +426,26 @@ class LeetCodeClient:
         seen_slugs = set()
 
         for item in ac_raw:
+            if not isinstance(item, dict):
+                continue
             slug = item.get("titleSlug")
-            if slug and slug not in seen_slugs:
-                seen_slugs.add(slug)
+            if not isinstance(slug, str) or not slug or slug in seen_slugs:
+                continue
+            try:
+                raw_timestamp = item.get("timestamp")
+                timestamp = int(raw_timestamp) if raw_timestamp else None
                 problems.append(
                     ProblemStatusItem(
-                        id=str(item.get("id")),
-                        title=item.get("title", ""),
+                        id=str(item["id"]) if item.get("id") is not None else None,
+                        title=str(item.get("title") or ""),
                         titleSlug=slug,
                         status="SOLVED",
-                        timestamp=int(item.get("timestamp", 0)) if item.get("timestamp") else None,
+                        timestamp=timestamp,
                     )
                 )
+                seen_slugs.add(slug)
+            except (TypeError, ValueError) as exc:
+                logger.debug("Skipping malformed accepted submission %s: %s", item, exc)
 
         return UserProblemsResponse(
             username=username,
@@ -441,4 +480,3 @@ class LeetCodeClient:
         except Exception as exc:
             logger.debug("Failed to fetch question details for '%s': %s", title_slug, exc)
             return None
-

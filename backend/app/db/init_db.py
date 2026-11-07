@@ -1,33 +1,29 @@
-"""Database initialization and schema migration runner."""
+"""Database schema migration runner."""
 import logging
-from sqlalchemy import text
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.engine import Connection
+
 from app.db.session import engine
-from app.models.base import Base
-# Import all models so metadata is populated
-import app.models  # noqa: F401
 
 logger = logging.getLogger(__name__)
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 async def init_db() -> None:
-    """Create all tables in the database if they do not exist and stamp Alembic head."""
-    async with engine.begin() as conn:
-        logger.info("Initializing database tables...")
-        await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS alembic_version "
-                    "(version_num VARCHAR(32) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
-                )
-            )
-            res = await conn.execute(text("SELECT version_num FROM alembic_version"))
-            if res.scalar_one_or_none() is None:
-                await conn.execute(
-                    text("INSERT INTO alembic_version (version_num) VALUES ('0001_initial_schema')")
-                )
-                logger.info("Stamped alembic_version with 0001_initial_schema")
-        except Exception as exc:
-            logger.debug("Alembic version stamping skipped: %s", exc)
-        logger.info("Database tables initialized successfully.")
+    """Apply pending Alembic migrations without fabricating a revision stamp."""
+    alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
+    alembic_config.set_main_option(
+        "script_location", str(BACKEND_DIR / "alembic")
+    )
 
+    def upgrade(connection: Connection) -> None:
+        alembic_config.attributes["connection"] = connection
+        command.upgrade(alembic_config, "head")
+
+    logger.info("Applying pending database migrations...")
+    async with engine.connect() as connection:
+        await connection.run_sync(upgrade)
+    logger.info("Database migrations applied successfully.")

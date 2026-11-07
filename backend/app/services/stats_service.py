@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.config import settings
 from app.models.user import User
@@ -30,30 +31,37 @@ async def get_or_create_user(
     (real_name, avatar_url, contest_rating, global_ranking).
     Returns the User ORM object (already attached to the session).
     """
-    result = await session.execute(
-        select(User).where(User.username == profile.username)
-    )
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        user = User(
-            username=profile.username,
-            real_name=profile.realName,
-            avatar_url=profile.avatarUrl,
-            contest_rating=profile.contestRating,
-            global_ranking=profile.globalRanking,
+    bind = session.get_bind()
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+    insert_fn = sqlite_insert if dialect_name == "sqlite" else pg_insert
+    values = {
+        "id": uuid.uuid4(),
+        "username": profile.username,
+        "real_name": profile.realName,
+        "avatar_url": profile.avatarUrl,
+        "contest_rating": profile.contestRating,
+        "global_ranking": profile.globalRanking,
+    }
+    stmt = (
+        insert_fn(User)
+        .values(**values)
+        .on_conflict_do_update(
+            index_elements=[User.username],
+            set_={
+                "real_name": profile.realName,
+                "avatar_url": profile.avatarUrl,
+                "contest_rating": profile.contestRating,
+                "global_ranking": profile.globalRanking,
+                "updated_at": datetime.now(timezone.utc),
+            },
         )
-        session.add(user)
-        logger.info("Created new user record for '%s'", profile.username)
-    else:
-        # Refresh mutable fields
-        user.real_name = profile.realName
-        user.avatar_url = profile.avatarUrl
-        user.contest_rating = profile.contestRating
-        user.global_ranking = profile.globalRanking
-        logger.debug("Updated existing user record for '%s'", profile.username)
-
-    await session.flush()  # Obtain the user.id without committing
+        .returning(User.id)
+    )
+    result = await session.execute(stmt)
+    user_id = result.scalar_one()
+    user_result = await session.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one()
+    logger.debug("Upserted user record for '%s'", profile.username)
     return user
 
 

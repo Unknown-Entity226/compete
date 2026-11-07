@@ -17,7 +17,7 @@ from app.models.base import Base
 config = context.config
 
 # Set the SQLAlchemy URL from our app settings (overrides alembic.ini)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Configure Python logging from alembic.ini if present
 if config.config_file_name is not None:
@@ -65,7 +65,11 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     """Entry point for online (connected) migration mode."""
-    asyncio.run(run_async_migrations())
+    existing_connection = config.attributes.get("connection")
+    if existing_connection is not None:
+        do_run_migrations(existing_connection)
+    else:
+        asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

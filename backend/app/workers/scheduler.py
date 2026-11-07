@@ -59,30 +59,19 @@ async def _renew_lock(redis_client, lock_key: str, lock_token: str, lock_lost: a
 
 
 async def _sync_users(client, lock_lost: asyncio.Event) -> int:
-    """Run one bounded batch at a time while this process owns the lock."""
-    try:
-        async with async_session_factory() as session:
-            pruned = await prune_old_snapshots(session)
-            result = await session.execute(select(User.username))
-            usernames = [row[0] for row in result.fetchall()]
-            await session.commit()
-        if pruned:
-            logger.info("Pruned %d statistics snapshots beyond the retention window.", pruned)
-    except Exception as exc:
-        logger.error("Failed to prepare tracked-user sync: %s", exc)
-        return 0
-
-    if not usernames:
-        logger.info("No tracked users in database to sync.")
-        return 0
-
+    """Sync tracked users in keyset-paginated batches under the distributed lock."""
     concurrency = max(1, settings.BACKGROUND_SYNC_CONCURRENCY)
+    batch_size = max(100, concurrency * 4)
     semaphore = asyncio.Semaphore(concurrency)
 
     async def _sync_single_user(username: str) -> bool:
         async with semaphore:
+            if lock_lost.is_set():
+                return False
             try:
                 profile = await client.get_user_profile(username)
+                if lock_lost.is_set():
+                    return False
                 async with async_session_factory() as session:
                     result = await session.execute(select(User).where(User.username == username))
                     user = result.scalar_one_or_none()
@@ -100,18 +89,46 @@ async def _sync_users(client, lock_lost: asyncio.Event) -> int:
                 await asyncio.sleep(0.2)
 
     synced_count = 0
-    batch_size = concurrency * 4
-    for start in range(0, len(usernames), batch_size):
+    processed_count = 0
+    last_username: Optional[str] = None
+    first_batch = True
+    while not lock_lost.is_set():
+        try:
+            async with async_session_factory() as session:
+                if first_batch:
+                    pruned = await prune_old_snapshots(session)
+                    if pruned:
+                        logger.info(
+                            "Pruned %d statistics snapshots beyond the retention window.",
+                            pruned,
+                        )
+                    first_batch = False
+
+                query = select(User.username)
+                if last_username is not None:
+                    query = query.where(User.username > last_username)
+                query = query.order_by(User.username).limit(batch_size)
+                result = await session.execute(query)
+                usernames = [row[0] for row in result.fetchall()]
+                await session.commit()
+        except Exception as exc:
+            logger.error("Failed to load the next tracked-user batch: %s", exc)
+            break
+
+        if not usernames:
+            break
+
         if lock_lost.is_set():
             break
-        batch = usernames[start : start + batch_size]
-        results = await asyncio.gather(*(_sync_single_user(username) for username in batch))
+        results = await asyncio.gather(*(_sync_single_user(username) for username in usernames))
         synced_count += sum(1 for result in results if result)
+        processed_count += len(usernames)
+        last_username = usernames[-1]
 
     logger.info(
         "Completed background synchronization: refreshed %d/%d users.",
         synced_count,
-        len(usernames),
+        processed_count,
     )
     return synced_count
 
@@ -242,4 +259,3 @@ def get_scheduler_status() -> Dict[str, Any]:
         "jobs_count": len(jobs_info),
         "jobs": jobs_info,
     }
-
