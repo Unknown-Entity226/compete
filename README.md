@@ -22,10 +22,10 @@ flowchart TD
 ```
 
 ### Core Subsystems:
-* **`CompeteFastAPI/`**: Python 3.12+ FastAPI backend implementing async SQLAlchemy 2.0, Redis caching with persistent PostgreSQL and bounded in-memory fallbacks, SingleFlight request deduplication, distributed APScheduler background sync, and SlowAPI rate limiting.
+* **`backend/`**: Python 3.12+ FastAPI backend implementing async SQLAlchemy 2.0, Redis caching with persistent PostgreSQL and bounded in-memory fallbacks, SingleFlight request deduplication, distributed APScheduler background sync, and SlowAPI rate limiting.
 
 Cache writes are persisted to PostgreSQL with the same TTL as Redis. On a Redis miss or connection failure, the backend checks PostgreSQL and warms Redis again when it is reachable; bounded process memory remains the final fallback if the database is unavailable.
-* **`CompeteFrontend/`**: React + Vite single-page application for rendering duel comparisons, stats breakdown, and progress charts.
+* **`frontend/`**: React + Vite single-page application for rendering duel comparisons, stats breakdown, and progress charts.
 
 ---
 
@@ -51,9 +51,10 @@ Cache writes are persisted to PostgreSQL with the same TTL as Redis. On a Redis 
 
 ### Setup & Run Backend
 
-1. Navigate to the backend directory and configure virtual environment:
+1. Navigate to the backend directory, copy the environment template, and configure a virtual environment:
    ```bash
-   cd CompeteFastAPI
+   cd backend
+   cp .env.example .env
    python -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
@@ -79,7 +80,7 @@ Cache writes are persisted to PostgreSQL with the same TTL as Redis. On a Redis 
 ## Running the Automated Test Suite
 
 ```bash
-cd CompeteFastAPI
+cd backend
 .venv/bin/pytest -v
 ```
 
@@ -89,7 +90,7 @@ cd CompeteFastAPI
 
 To run the complete production backend stack:
 ```bash
-cd CompeteFastAPI
+cd backend
 docker compose up -d --build
 ```
 The API is exposed at `http://localhost:8000` with interactive OpenAPI documentation at `http://localhost:8000/docs`.
