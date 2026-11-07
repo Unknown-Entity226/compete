@@ -22,12 +22,6 @@ def upgrade() -> None:
         sa.Column("key", sa.Text(), nullable=False),
         sa.Column("value", sa.Text(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
         sa.PrimaryKeyConstraint("key"),
     )
     op.create_index(

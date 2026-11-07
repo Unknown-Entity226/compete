@@ -242,7 +242,7 @@ class CacheService:
         return True
 
     async def clear_all(self) -> None:
-    """Clear all entries from every cache tier."""
+        """Clear all entries from every cache tier."""
         self._fallback_store.clear()
         redis_client = await self._get_redis()
         if redis_client:
