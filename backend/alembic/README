@@ -1,6 +1,6 @@
-# Alembic Database Migrations for CompeteFastAPI
+# Alembic Database Migrations for Compete
 
-This directory contains the SQLAlchemy migration environment and revision scripts for the `CompeteFastAPI` PostgreSQL database.
+This directory contains the SQLAlchemy migration environment and revision scripts for the backend database. Run Alembic commands from the `backend/` directory so the application settings and migration path resolve correctly.
 
 ## Migration Commands
 

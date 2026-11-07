@@ -60,6 +60,8 @@ class Settings(BaseSettings):
         """Ensure database URLs use drivers supported by the async engine."""
         if v.startswith("postgres://"):
             return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        if v.startswith(("postgresql+psycopg://", "postgresql+psycopg2://")):
+            return v.replace(v.split("://", 1)[0], "postgresql+asyncpg", 1)
         if v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+asyncpg://", 1)
         if v.startswith("sqlite://"):

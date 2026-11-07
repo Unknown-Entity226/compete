@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_leetcode_client, get_db
 from app.core.config import settings
+from app.core.time_utils import as_utc
 from app.core.limiter import limiter
 from app.core.validation import validate_username_str
 from app.db.session import async_session_factory
@@ -169,7 +170,7 @@ async def get_user_problems(
     limit: int = Query(
         default=50,
         ge=1,
-        le=100,
+        le=50,
         description="Maximum number requested; LeetCode currently returns at most 50",
     ),
     client: LeetCodeClientProtocol = Depends(get_leetcode_client),
@@ -250,7 +251,7 @@ async def get_user_history(
         snapshotCount=len(snapshots),
         snapshots=[
             SnapshotEntry(
-                snapshotAt=s.snapshot_at.isoformat(),
+                snapshotAt=as_utc(s.snapshot_at).isoformat(),
                 totalSolved=s.total_solved,
                 easySolved=s.easy_solved,
                 mediumSolved=s.medium_solved,

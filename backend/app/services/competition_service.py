@@ -10,6 +10,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.statistic import Statistic
+from app.core.time_utils import as_utc
 from app.schemas.activity import SubmissionItem, UserActivityResponse
 from app.schemas.compare import (
     CompareResponse,
@@ -76,7 +77,7 @@ class CompetitionService:
                     sub_date = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(tz).date()
                     active_dates.add(sub_date)
                 elif hasattr(s, "submitted_at") and s.submitted_at:
-                    sub_date = s.submitted_at.astimezone(tz).date()
+                    sub_date = as_utc(s.submitted_at).astimezone(tz).date()
                     active_dates.add(sub_date)
 
         for ts in (additional_timestamps or []):

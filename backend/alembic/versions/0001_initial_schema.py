@@ -28,8 +28,8 @@ def upgrade() -> None:
         sa.Column("avatar_url", sa.String(length=1024), nullable=True),
         sa.Column("contest_rating", sa.Integer(), nullable=True),
         sa.Column("global_ranking", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("username", name="uq_users_username"),
     )
@@ -46,8 +46,8 @@ def upgrade() -> None:
         sa.Column("title_slug", sa.String(length=255), nullable=False),
         sa.Column("difficulty", sa.String(length=20), nullable=False),
         sa.Column("topic_tags", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("frontend_question_id", name="uq_problems_frontend_question_id"),
         sa.UniqueConstraint("title_slug", name="uq_problems_title_slug"),
@@ -65,8 +65,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=30), nullable=False),
         sa.Column("solved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_attempted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.ForeignKeyConstraint(["problem_id"], ["problems.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -89,7 +89,7 @@ def upgrade() -> None:
         sa.Column("global_ranking", sa.Integer(), nullable=True),
         sa.Column("solving_velocity_7d", sa.Float(), nullable=False),
         sa.Column("solving_velocity_30d", sa.Float(), nullable=False),
-        sa.Column("snapshot_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("snapshot_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -127,4 +127,3 @@ def downgrade() -> None:
     op.drop_table("user_problems")
     op.drop_table("problems")
     op.drop_table("users")
-

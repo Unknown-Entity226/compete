@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.config import settings
+from app.core.time_utils import as_utc
 from app.models.user import User
 from app.models.statistic import Statistic
 from app.schemas.user import UserProfileResponse
@@ -59,7 +60,11 @@ async def get_or_create_user(
     )
     result = await session.execute(stmt)
     user_id = result.scalar_one()
-    user_result = await session.execute(select(User).where(User.id == user_id))
+    user_result = await session.execute(
+        select(User)
+        .where(User.id == user_id)
+        .execution_options(populate_existing=True)
+    )
     user = user_result.scalar_one()
     logger.debug("Upserted user record for '%s'", profile.username)
     return user
@@ -81,7 +86,8 @@ async def compute_solving_velocity(
 
     Returns 0.0 if no reference snapshot exists.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
 
     # 1. Oldest snapshot inside the window → gives us the longest possible baseline
     result = await session.execute(
@@ -116,9 +122,7 @@ async def compute_solving_velocity(
         return 0.0
 
     delta_solved = max(0, current_total - reference_snapshot.total_solved)
-    elapsed_seconds = (
-        datetime.now(timezone.utc) - reference_snapshot.snapshot_at
-    ).total_seconds()
+    elapsed_seconds = (now - as_utc(reference_snapshot.snapshot_at)).total_seconds()
     elapsed_days = max(1.0, elapsed_seconds / 86400.0)
     return round(delta_solved / elapsed_days, 2)
 
@@ -139,11 +143,12 @@ async def record_snapshot(
         min_interval_seconds = settings.SNAPSHOT_MIN_INTERVAL_SECONDS
 
     current_total = profile.problemStats.total
+    now = datetime.now(timezone.utc)
 
     if min_interval_seconds > 0:
         latest = await get_latest_snapshot(session, user.username)
         if latest is not None:
-            elapsed = (datetime.now(timezone.utc) - latest.snapshot_at).total_seconds()
+            elapsed = (now - as_utc(latest.snapshot_at)).total_seconds()
             same_metrics = (
                 latest.total_solved == current_total
                 and latest.easy_solved == profile.problemStats.easy
@@ -178,7 +183,7 @@ async def record_snapshot(
         global_ranking=profile.globalRanking,
         solving_velocity_7d=velocity_7d,
         solving_velocity_30d=velocity_30d,
-        snapshot_at=datetime.now(timezone.utc),
+        snapshot_at=now,
     )
     session.add(snapshot)
     logger.debug(
@@ -219,9 +224,9 @@ async def get_user_snapshots(
         .where(User.username == username)
     )
     if from_date is not None:
-        query = query.where(Statistic.snapshot_at >= from_date)
+        query = query.where(Statistic.snapshot_at >= as_utc(from_date))
     if to_date is not None:
-        query = query.where(Statistic.snapshot_at <= to_date)
+        query = query.where(Statistic.snapshot_at <= as_utc(to_date))
 
     query = query.order_by(Statistic.snapshot_at.desc()).offset(offset).limit(limit)
     result = await session.execute(query)

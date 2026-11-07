@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 MAX_FALLBACK_ENTRIES = 10_000
+CACHE_KEY_PREFIX = "compete:user:"
 
 
 class CacheService:
@@ -62,24 +63,27 @@ class CacheService:
                 urls_to_try.append("unix:///tmp/redis.sock")
 
             for url in urls_to_try:
-                client = aioredis.from_url(
-                    url,
-                    decode_responses=True,
-                    socket_connect_timeout=1.5,
-                    socket_timeout=1.5,
-                )
+                client = None
                 try:
+                    client = aioredis.from_url(
+                        url,
+                        decode_responses=True,
+                        socket_connect_timeout=1.5,
+                        socket_timeout=1.5,
+                    )
                     await client.ping()
                     self._redis = client
                     self._last_redis_failure = 0.0
                     logger.info("Connected to Redis at %s", url)
                     return client
                 except asyncio.CancelledError:
-                    await self._close_redis_client(client)
+                    if client is not None:
+                        await self._close_redis_client(client)
                     raise
                 except Exception as e:
                     logger.debug("Failed connecting to Redis at %s: %s", url, e)
-                    await self._close_redis_client(client)
+                    if client is not None:
+                        await self._close_redis_client(client)
 
             logger.warning(
                 "Unable to connect to Redis at %s. Using %s.",
@@ -98,10 +102,7 @@ class CacheService:
                 self._last_redis_failure = time.monotonic()
                 should_close = True
         if should_close:
-            try:
-                await self._close_redis_client(client)
-            except Exception:
-                pass
+            await self._close_redis_client(client)
 
     @staticmethod
     async def _close_redis_client(client: aioredis.Redis) -> None:
@@ -126,6 +127,10 @@ class CacheService:
         # SQL cache is shared by application workers and survives Redis restarts.
         if not self.fallback_enabled:
             return None
+        memory_value = self._get_memory(key)
+        if memory_value is not None:
+            return memory_value
+
         database_value = await self._database_cache.get(key)
         if database_value is not None:
             value, remaining_ttl = database_value
@@ -140,13 +145,15 @@ class CacheService:
                     await self._mark_redis_unavailable(redis_client)
             return value
 
-        # Final fallback for a database outage or isolated local cache.
+        return None
+
+    def _get_memory(self, key: str) -> Optional[str]:
+        """Read the bounded local cache and discard expired entries."""
         if key in self._fallback_store:
             val, expire_at = self._fallback_store[key]
             if time.monotonic() < expire_at:
                 self._fallback_store.move_to_end(key)
                 return val
-            # Expired
             self._fallback_store.pop(key, None)
         return None
 
@@ -242,14 +249,23 @@ class CacheService:
         return True
 
     async def clear_all(self) -> None:
-        """Clear all entries from every cache tier."""
+        """Clear this service's cache keys without touching locks or rate limits."""
         self._fallback_store.clear()
         redis_client = await self._get_redis()
         if redis_client:
             try:
-                await redis_client.flushdb()
+                batch = []
+                async for key in redis_client.scan_iter(
+                    match=f"{CACHE_KEY_PREFIX}*", count=500
+                ):
+                    batch.append(key)
+                    if len(batch) >= 500:
+                        await redis_client.delete(*batch)
+                        batch.clear()
+                if batch:
+                    await redis_client.delete(*batch)
             except Exception as exc:
-                logger.debug("Redis flush failed: %s", exc)
+                logger.debug("Redis cache clear failed: %s", exc)
                 await self._mark_redis_unavailable(redis_client)
         if self.fallback_enabled:
             await self._database_cache.clear_all()

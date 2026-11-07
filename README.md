@@ -9,7 +9,7 @@
 ```mermaid
 flowchart TD
     Client["Client / Frontend (Vite + React)"]
-    FastAPI["FastAPI Subsystem (CompeteFastAPI)"]
+    FastAPI["FastAPI Subsystem (backend/)"]
     Redis["Redis (Multi-tier Cache & Distributed Lock)"]
     PostgreSQL["PostgreSQL 16 (Relational Catalog & Snapshots)"]
     LeetCode["LeetCode GraphQL API"]

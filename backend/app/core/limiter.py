@@ -25,6 +25,9 @@ def get_client_ip(request: Request) -> str:
 
     def is_trusted(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         for configured_proxy in settings.TRUSTED_PROXIES:
+            configured_proxy = configured_proxy.strip()
+            if not configured_proxy:
+                continue
             try:
                 if address in ipaddress.ip_network(configured_proxy, strict=False):
                     return True
@@ -66,5 +69,6 @@ limiter = Limiter(
     key_func=get_client_ip,
     default_limits=[settings.DEFAULT_RATE_LIMIT],
     storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
     headers_enabled=False,
 )
